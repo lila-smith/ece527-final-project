@@ -15,12 +15,13 @@
 
 #define ARRAY_LEN 32
 #define DIMENSIONS 2
+#define CONVERGENCE_THRESH 0.001
 
 #define MINVAL   0.0
 #define MAXVAL  100.0
 
-#define ITERS 10
-#define K 3
+#define ITERS 100
+#define K 5
 
 
 typedef double data_t;
@@ -41,7 +42,7 @@ int init_array(arr_ptr v, long int row_len, long int col_len);
 int init_array_rand(arr_ptr v, long int row_len, long int col_len);
 int print_array(arr_ptr v);
 
-void kmeans(arr_ptr v, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations);
+void kmeans(arr_ptr v, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations);
 
 /*****************************************************************************/
 int main(int argc, char *argv[])
@@ -65,18 +66,14 @@ int main(int argc, char *argv[])
         init_array_rand(v0, ARRAY_LEN, DIMENSIONS);
         init_array_rand(centroids, K, DIMENSIONS);
         init_array_rand(centroids_tmp, K, DIMENSIONS);
-        kmeans(v0, centroids, centroids_tmp, ITERS);
-        acc += (double)(*iterations);
-        printf(", %d", *iterations);
+        kmeans(v0, centroids, centroids_tmp, ITERS, (int) floor(CONVERGENCE_THRESH*ARRAY_LEN), iterations);
+        //acc += (double)(*iterations);
+        printf("Iterations: %d", *iterations);
 
     printf("\n");
 
-
-  for (i = 0; i < ITERS; i++) {
-    printf("%0.4f, %0.1f\n", convergence[i][0], convergence[i][1]);
-  }
   printf("Array size = %d x %d\n", ARRAY_LEN, DIMENSIONS);
-  print_array(v0);
+  // print_array(v0);
 
 } /* end main */
 
@@ -200,60 +197,69 @@ double fRand(double fMin, double fMax)
 /************************************/
 
 /* K-means */
-void kmeans(arr_ptr v, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations)
+void kmeans(arr_ptr v, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations)
 {
-  long int i, j, k, min_k;
+  long int i, j, k, min_dist_centroid;
   long int row_len = get_arr_rowlen(v);
-  long int col_len = get_arr_collen(v);
+  long int dimensions = get_arr_collen(v);
   data_t *data = get_arr_start(v);
   data_t *centroid_data = get_arr_start(centroids);
   data_t *centroids_tmp_data = get_arr_start(centroids_tmp);
   int *counts = (int *) calloc(K, sizeof(int));
+  int *assignments = (int *) malloc(row_len * sizeof(int));
   int iters = 0;
   data_t min_dist, dist, diff;
-
-  while (iters < max_iterations) {
+  int moved_points = convergence_thresh*10; // Placeholder to ensure loop runs
+  
+  while ((moved_points > convergence_thresh && iters < max_iterations) || iters == 0) {
     /* Reset accumulators for this iteration */
-    memset(centroids_tmp_data, 0, K * col_len * sizeof(data_t));
-    memset(counts, 0, K * sizeof(int));
+    memset(centroids_tmp_data, 0, K * dimensions * sizeof(data_t));
+    printf("Iteration %d: , Moved points: %d", iters, moved_points);
+    int moved_points_tmp = 0; 
 
     /* Assignment step: assign each point to nearest centroid */
     for (j = 0; j < row_len; j++) {
       min_dist = -1.0;
-      min_k = 0;
+      min_dist_centroid = 0;
       for (k = 0; k < K; k++) {
         dist = 0.0;
-        for (i = 0; i < col_len; i++) {
-          diff = centroid_data[k*col_len+i] - data[j*col_len+i];
+        for (i = 0; i < dimensions; i++) {
+          diff = centroid_data[k*dimensions+i] - data[j*dimensions+i];
           dist += diff * diff;
         }
         if (min_dist < 0.0 || dist < min_dist) {
           min_dist = dist;
-          min_k = k;
+          min_dist_centroid = k;
         }
       }
-      /* Accumulate only into the nearest centroid */
-      for (i = 0; i < col_len; i++) {
-        centroids_tmp_data[min_k*col_len+i] += data[j*col_len+i];
+      if (assignments[j] != min_dist_centroid) {
+        moved_points_tmp++;
+        assignments[j] = min_dist_centroid;
       }
-      counts[min_k]++;
+      /* Accumulate only into the nearest centroid */
+      for (i = 0; i < dimensions; i++) {
+        centroids_tmp_data[min_dist_centroid*dimensions+i] += data[j*dimensions+i];
+      }
+      counts[min_dist_centroid]++;
     }
 
     /* Update step: new centroid = mean of assigned points */
-    printf("Centroids_tmp ");
     for (k = 0; k < K; k++) {
       if (counts[k] > 0) {
-        for (i = 0; i < col_len; i++) {
-          centroids_tmp_data[k*col_len+i] /= counts[k];
-          printf("%0.4f ", centroids_tmp_data[k*col_len+i]);
+        for (i = 0; i < dimensions; i++) {
+          centroids_tmp_data[k*dimensions+i] /= counts[k];
         }
       }
     }
     printf("\n");
 
-    memcpy(centroid_data, centroids_tmp_data, K * col_len * sizeof(data_t));
+    memcpy(centroid_data, centroids_tmp_data, K * dimensions * sizeof(data_t));
+    moved_points = moved_points_tmp;
     iters++;
   }
 
+  *iterations = iters;
+
+  free(assignments);
   free(counts);
 }
