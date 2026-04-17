@@ -5,6 +5,7 @@
 #include <random>
 #include <cmath>
 #include <fstream>
+#include <array>
 
 // Simple particle struct
 struct Particle {

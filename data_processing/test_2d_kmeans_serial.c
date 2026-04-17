@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define ARRAY_LEN 32
+#define ARRAY_LEN 100
 #define DIMENSIONS 2
 #define CONVERGENCE_THRESH 0.001
 
@@ -21,10 +21,12 @@
 #define MAXVAL  100.0
 
 #define ITERS 100
-#define K 5
+#define K 3
+
+#define RAND 0
 
 
-typedef double data_t;
+typedef float data_t;
 
 /* Create abstract data type for a 2D array */
 typedef struct {
@@ -40,9 +42,10 @@ long int get_arr_rowlen(arr_ptr v);
 long int get_arr_collen(arr_ptr v);
 int init_array(arr_ptr v, long int row_len, long int col_len);
 int init_array_rand(arr_ptr v, long int row_len, long int col_len);
+int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, char *filename);
 int print_array(arr_ptr v);
 
-void kmeans(arr_ptr v, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations);
+void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations);
 
 /*****************************************************************************/
 int main(int argc, char *argv[])
@@ -55,6 +58,7 @@ int main(int argc, char *argv[])
 
   /* declare and initialize the array */
   arr_ptr v0 = new_array(ARRAY_LEN, DIMENSIONS);
+  arr_ptr pT = new_array(ARRAY_LEN, 1);
   iterations = (int *) malloc(sizeof(int));
 
   arr_ptr centroids = new_array(K, DIMENSIONS);
@@ -63,16 +67,24 @@ int main(int argc, char *argv[])
   printf("Array size = %d x %d\n", ARRAY_LEN, DIMENSIONS);
   
     double acc = 0.0;
+    if (RAND) {
         init_array_rand(v0, ARRAY_LEN, DIMENSIONS);
+        init_array_rand(pT, ARRAY_LEN, 1);
+        }
+    else {
+        init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, "../event_generating/events.txt");
+    }    
         init_array_rand(centroids, K, DIMENSIONS);
         init_array_rand(centroids_tmp, K, DIMENSIONS);
-        kmeans(v0, centroids, centroids_tmp, ITERS, (int) floor(CONVERGENCE_THRESH*ARRAY_LEN), iterations);
+        kmeans(v0, pT, centroids, centroids_tmp, ITERS, (int) floor(CONVERGENCE_THRESH*ARRAY_LEN), iterations);
         //acc += (double)(*iterations);
         printf("Iterations: %d", *iterations);
 
     printf("\n");
 
   printf("Array size = %d x %d\n", ARRAY_LEN, DIMENSIONS);
+  printf("Final centroids:\n");
+  print_array(centroids);
   // print_array(v0);
 
 } /* end main */
@@ -167,6 +179,40 @@ int init_array_rand(arr_ptr v, long int row_len, long int col_len)
   else return 0;
 }
 
+int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, char *filename)
+{
+  long int i;
+  float dummy1;
+  int dummy2;
+  FILE *file = fopen(filename, "r");
+  if (!file) {
+    printf("Couldn't open file %s\n", filename);
+    return 0;
+  }
+
+  char line[256];
+  i = 0;
+  while (fgets(line, sizeof(line), file) && i < row_len) {
+        // Strip trailing newline
+        line[strcspn(line, "\n")] = '\0';
+
+        // Pass through event headers / separators
+        if (strncmp(line, "Event", 5) == 0 || strcmp(line, "----") == 0) {
+            continue;
+        }
+
+        float weights, eta, phi, mass;
+        int id;
+
+        if (sscanf(line, "%f %f %f %f %d", &pT->data[i], &etaphi->data[i], &etaphi->data[row_len+i], &dummy1, &dummy2) != 5) continue;
+        i++;
+      }
+    fclose(file);
+    print_array(etaphi);
+    print_array(pT);
+    return 1;
+}
+
 /* print all elements of an array */
 int print_array(arr_ptr v)
 {
@@ -197,7 +243,7 @@ double fRand(double fMin, double fMax)
 /************************************/
 
 /* K-means */
-void kmeans(arr_ptr v, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations)
+void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations)
 {
   long int i, j, k, min_dist_centroid;
   long int row_len = get_arr_rowlen(v);
@@ -205,7 +251,7 @@ void kmeans(arr_ptr v, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterati
   data_t *data = get_arr_start(v);
   data_t *centroid_data = get_arr_start(centroids);
   data_t *centroids_tmp_data = get_arr_start(centroids_tmp);
-  int *counts = (int *) calloc(K, sizeof(int));
+  data_t *counts = (data_t *) calloc(K, sizeof(data_t));
   int *assignments = (int *) malloc(row_len * sizeof(int));
   int iters = 0;
   data_t min_dist, dist, diff;
@@ -238,9 +284,9 @@ void kmeans(arr_ptr v, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterati
       }
       /* Accumulate only into the nearest centroid */
       for (i = 0; i < dimensions; i++) {
-        centroids_tmp_data[min_dist_centroid*dimensions+i] += data[j*dimensions+i];
+        centroids_tmp_data[min_dist_centroid*dimensions+i] += weights->data[j] * data[j*dimensions+i];
       }
-      counts[min_dist_centroid]++;
+      counts[min_dist_centroid] += weights->data[j]; 
     }
 
     /* Update step: new centroid = mean of assigned points */
