@@ -78,21 +78,26 @@ int main(int argc, char *argv[])
     else {
         init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, "../event_generating/events.txt");
     }   
+        /* Run k-means for each value of k from 1 to K_MAX, storing results */
         for (k=1; k<=K_MAX; k++) {
+          /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
           init_array_rand(centroids, K_MAX, DIMENSIONS);
           init_array_rand(centroids_tmp, K_MAX, DIMENSIONS);
           kmeans(v0, pT, centroids, centroids_tmp, ITERS, (int) floor(CONVERGENCE_THRESH*ARRAY_LEN), iterations, &total_diff, k);
+          /* Store results for this k to print/analyze after all runs complete */
           all_iterations[k-1] = *iterations;
           all_diffs[k-1] = total_diff;
           memcpy(all_centroids[k-1], centroids->data, k * DIMENSIONS * sizeof(data_t));
         }
 
+  /* Print stored results for every k value */
   printf("\n--- Results ---\n");
   for (k=1; k<=K_MAX; k++) {
     printf("\nk = %ld:\n", k);
     printf("  Iterations:       %d\n", all_iterations[k-1]);
     printf("  Total difference: %f\n", all_diffs[k-1]);
     printf("  Centroids:\n");
+    /* Print each centroid's coordinates for this k */
     for (i=0; i < k; i++) {
       printf("    ");
       for (j=0; j < DIMENSIONS; j++)
@@ -101,9 +106,14 @@ int main(int argc, char *argv[])
     }
   }
 
+  /* Elbow method: compute the 2nd discrete difference of total_diff.
+     The inertia (total_diff) always decreases with more clusters; the 2nd
+     difference finds where the rate of decrease sharply flattens (the "elbow"),
+     indicating the most efficient number of clusters. */
   printf("\n--- Elbow (2nd difference of total_diff) ---\n");
   for (k = 2; k < K_MAX - 1; k++) {
       second_diff = all_diffs[k+1] - 2*all_diffs[k] + all_diffs[k-1];
+      /* Track the k with the largest 2nd difference — that is the elbow */
       if (k == 2 || second_diff > max_second_diff) {
           max_second_diff = second_diff;
           max_idx = k;
@@ -112,6 +122,7 @@ int main(int argc, char *argv[])
   }
   printf("\nSuggested optimal k: %ld with centroid at (%.4f, %.4f)\n", max_idx+1, all_centroids[max_idx][0], all_centroids[max_idx][1]);
 
+  /* Append the suggested optimal k and its centroids to the output file */
   FILE *file = fopen("kmeans_output.txt", "a+");
   fprintf(file, "k: %ld, centroids: ", max_idx+1);
   for (i=0; i < max_idx+1; i++) {
@@ -120,7 +131,6 @@ int main(int argc, char *argv[])
         fprintf(file, "%.4f ", all_centroids[max_idx][i*DIMENSIONS+j]);
       fprintf(file, ") ");
   }
-  
   fprintf(file, "\n");
   fclose(file);
 
@@ -230,11 +240,11 @@ int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_le
 
   char line[256];
   i = 0;
+  /* Read up to row_len particle lines from the file */
   while (fgets(line, sizeof(line), file) && i < row_len) {
-        // Strip trailing newline
         line[strcspn(line, "\n")] = '\0';
 
-        // Pass through event headers / separators
+        /* Skip event header and separator lines */
         if (strncmp(line, "Event", 5) == 0 || strcmp(line, "----") == 0) {
             continue;
         }
@@ -242,6 +252,9 @@ int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_le
         float weights, eta, phi, mass;
         int id;
 
+        /* Parse pT into weight array; eta and phi into the two rows of etaphi.
+           The etaphi array is stored as [eta_0..eta_n | phi_0..phi_n] so that
+           eta and phi form the two coordinate dimensions for k-means. */
         if (sscanf(line, "%f %f %f %f %d", &pT->data[i], &etaphi->data[i], &etaphi->data[row_len+i], &dummy1, &dummy2) != 5) continue;
         i++;
       }
@@ -291,19 +304,24 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
   int *assignments = (int *) malloc(row_len * sizeof(int));
   int iters = 0;
   data_t min_dist, dist, diff, weight_squared_diff;
-  int moved_points = convergence_thresh*10; // Placeholder to ensure loop runs
+  /* Start moved_points above threshold so the loop runs at least once */
+  int moved_points = convergence_thresh*10; 
+  
   printf("Running k-means with k = %d\n", k);
+  /* Iterate until fewer than convergence_thresh points change cluster,
+     or the maximum iteration count is reached */
   while ((moved_points > convergence_thresh && iters < max_iterations) || iters == 0) {
-    /* Reset accumulators for this iteration */
+    /* Zero out centroid accumulators and per-cluster weight sums each iteration */
     memset(centroids_tmp_data, 0, k * dimensions * sizeof(data_t));
     memset(counts, 0, k * sizeof(data_t));
     printf("Iteration %d: , Moved points: %d", iters, moved_points);
-    int moved_points_tmp = 0; 
+    int moved_points_tmp = 0;
     weight_squared_diff = 0.0;
-    /* Assignment step: assign each point to nearest centroid */
+    /* Assignment step: assign each point to the nearest centroid */
     for (j = 0; j < row_len; j++) {
       min_dist = -1.0;
       min_dist_centroid = 0;
+      /* Find the closest centroid using squared Euclidean distance */
       for (m = 0; m < k; m++) {
         dist = 0.0;
         for (i = 0; i < dimensions; i++) {
@@ -315,28 +333,32 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
           min_dist_centroid = m;
         }
       }
+      /* Count how many points switched clusters this iteration */
       if (assignments[j] != min_dist_centroid) {
         moved_points_tmp++;
         assignments[j] = min_dist_centroid;
       }
-      /* Accumulate only into the nearest centroid */
+      /* Accumulate pT-weighted coordinates into the nearest centroid's sum,
+         and add this point's weighted distance to the total inertia */
       for (i = 0; i < dimensions; i++) {
         centroids_tmp_data[min_dist_centroid*dimensions+i] += weights->data[j] * data[j*dimensions+i];
         weight_squared_diff += weights->data[j] * min_dist;
       }
-      counts[min_dist_centroid] += weights->data[j]; 
+      counts[min_dist_centroid] += weights->data[j];
     }
 
-    /* Update step: new centroid = mean of assigned points */
+    /* Update step: move each centroid to the pT-weighted mean of its assigned points */
     for (m = 0; m < k; m++) {
       if (counts[m] > 0) {
+        /* Divide accumulated weighted coordinate sum by total weight to get weighted mean */
         for (i = 0; i < dimensions; i++) {
           centroids_tmp_data[m*dimensions+i] /= counts[m];
           printf("%.4f ", centroids_tmp_data[m*dimensions+i]);
         }
         printf("\n");
       } else {
-        /* Empty cluster — retain previous centroid position */
+        /* Empty cluster: no points assigned, so keep the previous centroid position
+           to avoid collapsing it to (0, 0) */
         for (i = 0; i < dimensions; i++) {
           centroids_tmp_data[m*dimensions+i] = centroid_data[m*dimensions+i];
         }
