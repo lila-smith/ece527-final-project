@@ -333,6 +333,11 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
         dist = 0.0;
         for (i = 0; i < dimensions; i++) {
           diff = centroid_data[m*dimensions+i] - data[j*dimensions+i];
+          // Handle periodicity in phi (i.e. phi ~ phi +- 2pi)
+          if (i == 1) {
+            if (diff > M_PI) diff -= 2*M_PI;
+            if (diff < -M_PI) diff += 2*M_PI;
+          }
           dist += diff * diff;
         }
         if (min_dist < 0.0 || dist < min_dist) {
