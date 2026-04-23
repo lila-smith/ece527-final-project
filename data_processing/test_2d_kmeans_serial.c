@@ -307,6 +307,8 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
   data_t *centroids_tmp_data = get_arr_start(centroids_tmp);
   data_t *counts = (data_t *) calloc(k, sizeof(data_t));
   int *assignments = (int *) malloc(row_len * sizeof(int));
+  // Initialize assignments array (with dummy val) before using
+  for (j = 0; j < row_len; j++) assignments[j] = -1;
   int iters = 0;
   data_t min_dist, dist, diff, weight_squared_diff;
   /* Start moved_points above threshold so the loop runs at least once */
