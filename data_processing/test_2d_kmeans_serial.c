@@ -43,7 +43,7 @@ long int get_arr_collen(arr_ptr v);
 int init_array(arr_ptr v, long int row_len, long int col_len);
 int init_array_rand(arr_ptr v, long int row_len, long int col_len);
 int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, char *filename);
-int print_array(arr_ptr v);
+void print_array(arr_ptr v);
 
 void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations, data_t *total_diff, int k);
 
@@ -255,7 +255,12 @@ int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_le
         /* Parse pT into weight array; eta and phi into the two rows of etaphi.
            The etaphi array is stored as [eta_0..eta_n | phi_0..phi_n] so that
            eta and phi form the two coordinate dimensions for k-means. */
-        if (sscanf(line, "%f %f %f %f %d", &pT->data[i], &etaphi->data[i], &etaphi->data[row_len+i], &dummy1, &dummy2) != 5) continue;
+        //if (sscanf(line, "%f %f %f %f %d", &pT->data[i], &etaphi->data[i], &etaphi->data[row_len+i], &dummy1, &dummy2) != 5) continue;
+        if (sscanf(line, "%f %f %f %f %d", &pT->data[i], &eta, &phi, &dummy1, &dummy2) != 5) continue;
+        
+        // Store row-wise: [eta, phi] per particle to match row-major layout in k-means algo
+        etaphi->data[i*2]     = eta;
+        etaphi->data[i*2 + 1] = phi;
         i++;
       }
     fclose(file);
@@ -263,7 +268,7 @@ int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_le
 }
 
 /* print all elements of an array */
-int print_array(arr_ptr v)
+void print_array(arr_ptr v)
 {
   long int i, j, row_len, col_len;
 
