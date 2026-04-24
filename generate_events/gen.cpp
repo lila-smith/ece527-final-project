@@ -76,7 +76,7 @@ std::vector<Particle> generate_event(int n_particles, std::mt19937 &gen) {
     }
 
     // ---------- inject resonance dijet ----------
-    auto res = resonance_dijet(200.0, gen); // 200 GeV resonance
+    auto res = resonance_dijet(1000.0, gen); // 1000 GeV resonance
     event.push_back(res[0]);
     event.push_back(res[1]);
 
@@ -92,8 +92,8 @@ int main() {
 
     std::mt19937 gen(42); // fixed seed for reproducibility
 
-    int n_events = 5;
-    int particles_per_event = 100;
+    int n_events = 100;
+    int particles_per_event = 20;
 
     for (int i = 0; i < n_events; i++) {
         auto event = generate_event(particles_per_event, gen);

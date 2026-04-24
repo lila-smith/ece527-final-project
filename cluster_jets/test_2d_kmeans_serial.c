@@ -22,6 +22,7 @@
 
 #define ITERS 100
 #define K_MAX 20
+#define PT_CUT 80.0
 
 #define RAND 0
 #define NUM_EVENTS 100
@@ -301,6 +302,7 @@ int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_le
            eta and phi form the two coordinate dimensions for k-means. */
         //if (sscanf(line, "%f %f %f %f %d", &pT->data[i], &etaphi->data[i], &etaphi->data[row_len+i], &dummy1, &dummy2) != 5) continue;
         if (sscanf(line, "%f %f %f %f %d", &pT->data[i], &eta, &phi, &dummy1, &dummy2) != 5) continue;
+        if (pT->data[i] < PT_CUT) continue;   // particle-level pT threshold / cut
         
         // Store row-wise: [eta, phi] per particle to match row-major layout in k-means algo
         etaphi->data[i*2]     = eta;
@@ -350,6 +352,8 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
   data_t *centroid_data = get_arr_start(centroids);
   data_t *centroids_tmp_data = get_arr_start(centroids_tmp);
   data_t *counts = (data_t *) calloc(k, sizeof(data_t));
+  data_t *px = (data_t *) calloc(k, sizeof(data_t));
+  data_t *py = (data_t *) calloc(k, sizeof(data_t));
   int *assignments = (int *) malloc(row_len * sizeof(int));
   // Initialize assignments array (with dummy val) before using
   for (j = 0; j < row_len; j++) assignments[j] = -1;
@@ -365,6 +369,8 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
     /* Zero out centroid accumulators and per-cluster weight sums each iteration */
     memset(centroids_tmp_data, 0, k * dimensions * sizeof(data_t));
     memset(counts, 0, k * sizeof(data_t));
+    memset(px, 0, k * sizeof(data_t));
+    memset(py, 0, k * sizeof(data_t));
     printf("Iteration %d: , Moved points: %d", iters, moved_points);
     int moved_points_tmp = 0;
     weight_squared_diff = 0.0;
@@ -408,6 +414,8 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
       }
       weight_squared_diff += weights->data[j] * min_dist;
       counts[min_dist_centroid] += weights->data[j];
+      px[min_dist_centroid] += weights->data[j] * cosf(data[j*dimensions+1]);
+      py[min_dist_centroid] += weights->data[j] * sinf(data[j*dimensions+1]);
     }
 
     /* Update step: move each centroid to the pT-weighted mean of its assigned points */
@@ -442,7 +450,10 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
 
   *iterations = iters;
   *total_diff = weight_squared_diff;
-  memcpy(jet_pts, counts, k * sizeof(data_t));
+  //memcpy(jet_pts, counts, k * sizeof(data_t));
+  for (m = 0; m < k; m++) jet_pts[m] = sqrtf(px[m]*px[m] + py[m]*py[m]);
   free(assignments);
   free(counts);
+  free(px);
+  free(py);
 }
