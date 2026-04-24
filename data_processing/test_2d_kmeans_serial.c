@@ -46,7 +46,7 @@ int init_array_rand(arr_ptr v, long int row_len, long int col_len);
 int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, FILE *file);
 void print_array(arr_ptr v);
 
-void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations, data_t *total_diff, int k);
+void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp, data_t *jet_pts, int max_iterations, int convergence_thresh, int *iterations, data_t *total_diff, int k);
 
 /*****************************************************************************/
 int main(int argc, char *argv[])
@@ -58,6 +58,7 @@ int main(int argc, char *argv[])
   int all_iterations[NUM_EVENTS][K_MAX];
   data_t all_diffs[NUM_EVENTS][K_MAX];
   data_t all_centroids[NUM_EVENTS][K_MAX][K_MAX * DIMENSIONS];
+  data_t all_jet_pts[NUM_EVENTS][K_MAX][K_MAX];
   long int max_idx_per_event[NUM_EVENTS];
   long int event_id = 0;
 
@@ -70,6 +71,7 @@ int main(int argc, char *argv[])
 
   arr_ptr centroids = new_array(K_MAX, DIMENSIONS);
   arr_ptr centroids_tmp = new_array(K_MAX, DIMENSIONS);
+  data_t *jet_pts = (data_t *) malloc(K_MAX * sizeof(data_t));
 
   printf("Array size = %d x %d\n", ARRAY_LEN, DIMENSIONS);
   
@@ -98,11 +100,12 @@ int main(int argc, char *argv[])
           /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
           init_array_rand(centroids, K_MAX, DIMENSIONS);
           init_array_rand(centroids_tmp, K_MAX, DIMENSIONS);
-          kmeans(v0, pT, centroids, centroids_tmp, ITERS, (int) floor(CONVERGENCE_THRESH*ARRAY_LEN), iterations, &total_diff, k);
+          kmeans(v0, pT, centroids, centroids_tmp, jet_pts, ITERS, (int) floor(CONVERGENCE_THRESH*ARRAY_LEN), iterations, &total_diff, k);
           /* Store results for this k to print/analyze after all runs complete */
           all_iterations[event_id-1][k-1] = *iterations;
           all_diffs[event_id-1][k-1] = total_diff;
           memcpy(all_centroids[event_id-1][k-1], centroids->data, K_MAX * DIMENSIONS * sizeof(data_t));
+          memcpy(all_jet_pts[event_id-1][k-1], jet_pts, K_MAX*sizeof(data_t));
         }
     }
 
@@ -146,24 +149,39 @@ int main(int argc, char *argv[])
     }
     max_idx_per_event[e] = max_idx;
   }
+  // This is broken now
   //printf("\nSuggested optimal k: %ld with centroid at (%.4f, %.4f)\n", max_idx_per_event[e] + 1, all_centroids[max_idx][0], all_centroids[max_idx][1]);
 
-  // Append the suggested optimal k and its centroids to the output file 
-  FILE *out = fopen("kmeans_output.txt", "a+");
+  // Write the found jets as (pT η φ), where (η, φ) is the k-means centroid
+  FILE *out = fopen("jets.txt", "w");
 
   for (long int e = 0; e < event_id; e++) {
     long int kbest = max_idx_per_event[e];
-    fprintf(out, "k: %ld, centroids: ", max_idx_per_event[e] + 1);
+    fprintf(out, "event %ld njets %ld jets:", e+1, kbest+1);
     for (i=0; i < kbest+1; i++) {
-        fprintf(out, "(");
-        for (j=0; j < DIMENSIONS; j++)
-          fprintf(out, "%.4f ", all_centroids[e][kbest][i*DIMENSIONS+j]);
-        fprintf(out, ") ");
+      fprintf(out, " (%.4f %.4f %.4f)", all_jet_pts[e][kbest][i], all_centroids[e][kbest][i*DIMENSIONS], all_centroids[e][kbest][i*DIMENSIONS+1]);
     }
   fprintf(out, "\n");
   }
 
   fclose(out);
+
+  // Also append the original centroids-only format with optimal k to other output file
+  //FILE *out2 = fopen("kmeans_output.txt", "+a");
+
+  //for (long int e = 0; e < event_id; e++) {
+  //  long int kbest = max_idx_per_event[e];
+  //  fprintf(out2, "k: %ld, centroids: ", max_idx_per_event[e] + 1);
+  //  for (i=0; i < kbest+1; i++) {
+  //      fprintf(out2, "(");
+  //      for (j=0; j < DIMENSIONS; j++)
+  //        fprintf(out2, "%.4f ", all_centroids[e][kbest][i*DIMENSIONS+j]);
+  //      fprintf(out2, ") ");
+  //  }
+  //fprintf(out2, "\n");
+  //}
+
+  //fclose(out2);
 
 
 } /* end main */
@@ -323,7 +341,7 @@ double fRand(double fMin, double fMax)
 /************************************/
 
 /* K_MAX-means */
-void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations, data_t *total_diff, int k)
+void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp, data_t *jet_pts, int max_iterations, int convergence_thresh, int *iterations, data_t *total_diff, int k)
 {
   long int i, j, m, min_dist_centroid;
   long int row_len = get_arr_rowlen(v);
@@ -424,6 +442,7 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
 
   *iterations = iters;
   *total_diff = weight_squared_diff;
+  memcpy(jet_pts, counts, k * sizeof(data_t));
   free(assignments);
   free(counts);
 }
