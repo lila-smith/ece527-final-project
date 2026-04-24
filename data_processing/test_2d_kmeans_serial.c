@@ -24,6 +24,7 @@
 #define K_MAX 20
 
 #define RAND 0
+#define NUM_EVENTS 100
 
 
 typedef float data_t;
@@ -42,7 +43,7 @@ long int get_arr_rowlen(arr_ptr v);
 long int get_arr_collen(arr_ptr v);
 int init_array(arr_ptr v, long int row_len, long int col_len);
 int init_array_rand(arr_ptr v, long int row_len, long int col_len);
-int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, char *filename);
+int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, FILE *file);
 void print_array(arr_ptr v);
 
 void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp, int max_iterations, int convergence_thresh, int *iterations, data_t *total_diff, int k);
@@ -53,10 +54,12 @@ int main(int argc, char *argv[])
   double convergence[ITERS][2];
   int *iterations;
   long int i, j, k, max_idx;
-  data_t total_diff, second_diff, max_second_diff = -1.0;
-  int all_iterations[K_MAX];
-  data_t all_diffs[K_MAX];
-  data_t all_centroids[K_MAX][K_MAX * DIMENSIONS];
+  data_t total_diff, second_diff, max_second_diff;
+  int all_iterations[NUM_EVENTS][K_MAX];
+  data_t all_diffs[NUM_EVENTS][K_MAX];
+  data_t all_centroids[NUM_EVENTS][K_MAX][K_MAX * DIMENSIONS];
+  long int max_idx_per_event[NUM_EVENTS];
+  long int event_id = 0;
 
   printf("k-means test\n");
 
@@ -71,13 +74,25 @@ int main(int argc, char *argv[])
   printf("Array size = %d x %d\n", ARRAY_LEN, DIMENSIONS);
   
     double acc = 0.0;
-    if (RAND) {
-        init_array_rand(v0, ARRAY_LEN, DIMENSIONS);
-        init_array_rand(pT, ARRAY_LEN, 1);
-        }
-    else {
-        init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, "../event_generating/events.txt");
-    }   
+    // if (RAND) {
+    //     init_array_rand(v0, ARRAY_LEN, DIMENSIONS);
+    //     init_array_rand(pT, ARRAY_LEN, 1);
+    //     }
+    // else {
+    //     init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, "../event_generating/events.txt");
+    // }   
+
+    FILE *file = fopen("../event_generating/events.txt", "r");
+    if (!file) {
+      printf("Couldn't open file\n");
+      return 1;
+    }
+
+    // START EVENT LOOP
+    while (init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file)) {
+        event_id++;
+        max_second_diff = -1000000.0;
+        max_idx = 0;
         /* Run k-means for each value of k from 1 to K_MAX, storing results */
         for (k=1; k<=K_MAX; k++) {
           /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
@@ -85,54 +100,70 @@ int main(int argc, char *argv[])
           init_array_rand(centroids_tmp, K_MAX, DIMENSIONS);
           kmeans(v0, pT, centroids, centroids_tmp, ITERS, (int) floor(CONVERGENCE_THRESH*ARRAY_LEN), iterations, &total_diff, k);
           /* Store results for this k to print/analyze after all runs complete */
-          all_iterations[k-1] = *iterations;
-          all_diffs[k-1] = total_diff;
-          memcpy(all_centroids[k-1], centroids->data, k * DIMENSIONS * sizeof(data_t));
+          all_iterations[event_id-1][k-1] = *iterations;
+          all_diffs[event_id-1][k-1] = total_diff;
+          memcpy(all_centroids[event_id-1][k-1], centroids->data, K_MAX * DIMENSIONS * sizeof(data_t));
         }
+    }
+
+    fclose(file);
 
   /* Print stored results for every k value */
   printf("\n--- Results ---\n");
-  for (k=1; k<=K_MAX; k++) {
-    printf("\nk = %ld:\n", k);
-    printf("  Iterations:       %d\n", all_iterations[k-1]);
-    printf("  Total difference: %f\n", all_diffs[k-1]);
-    printf("  Centroids:\n");
-    /* Print each centroid's coordinates for this k */
-    for (i=0; i < k; i++) {
-      printf("    ");
-      for (j=0; j < DIMENSIONS; j++)
-        printf("%.4f ", all_centroids[k-1][i*DIMENSIONS+j]);
-      printf("\n");
+  for (long int e = 0; e < event_id; e++) {
+      printf("\n=== Event %ld ===\n", e+1);
+    for (k=1; k<=K_MAX; k++) {
+      printf("\nk = %ld:\n", k);
+      printf("  Iterations:       %d\n", all_iterations[e][k-1]);
+      printf("  Total difference: %f\n", all_diffs[e][k-1]);
+      printf("  Centroids:\n");
+      /* Print each centroid's coordinates for this k */
+      for (i=0; i < k; i++) {
+        printf("    ");
+        for (j=0; j < DIMENSIONS; j++)
+          printf("%.4f ", all_centroids[e][k-1][i*DIMENSIONS+j]);
+        printf("\n");
+      }
     }
-  }
+  } 
 
   /* Elbow method: compute the 2nd discrete difference of total_diff.
      The inertia (total_diff) always decreases with more clusters; the 2nd
      difference finds where the rate of decrease sharply flattens (the "elbow"),
      indicating the most efficient number of clusters. */
   printf("\n--- Elbow (2nd difference of total_diff) ---\n");
-  for (k = 2; k < K_MAX - 1; k++) {
-      second_diff = all_diffs[k+1] - 2*all_diffs[k] + all_diffs[k-1];
-      /* Track the k with the largest 2nd difference — that is the elbow */
-      if (k == 2 || second_diff > max_second_diff) {
-          max_second_diff = second_diff;
-          max_idx = k;
-      }
-      printf("k = %ld: %.4f\n", k+1, second_diff);
+  for (long int e = 0; e < event_id; e++) {
+    max_second_diff = -1.0;
+    max_idx = 2;
+    for (k = 2; k < K_MAX - 1; k++) {
+        second_diff = all_diffs[e][k+1] - 2*all_diffs[e][k] + all_diffs[e][k-1];
+        /* Track the k with the largest 2nd difference — that is the elbow */
+        if (second_diff > max_second_diff) {
+            max_second_diff = second_diff;
+            max_idx = k;
+        }
+        printf("k = %ld: %.4f\n", k+1, second_diff);
+    }
+    max_idx_per_event[e] = max_idx;
   }
-  printf("\nSuggested optimal k: %ld with centroid at (%.4f, %.4f)\n", max_idx+1, all_centroids[max_idx][0], all_centroids[max_idx][1]);
+  //printf("\nSuggested optimal k: %ld with centroid at (%.4f, %.4f)\n", max_idx_per_event[e] + 1, all_centroids[max_idx][0], all_centroids[max_idx][1]);
 
-  /* Append the suggested optimal k and its centroids to the output file */
-  FILE *file = fopen("kmeans_output.txt", "a+");
-  fprintf(file, "k: %ld, centroids: ", max_idx+1);
-  for (i=0; i < max_idx+1; i++) {
-      fprintf(file, "(");
-      for (j=0; j < DIMENSIONS; j++)
-        fprintf(file, "%.4f ", all_centroids[max_idx][i*DIMENSIONS+j]);
-      fprintf(file, ") ");
+  // Append the suggested optimal k and its centroids to the output file 
+  FILE *out = fopen("kmeans_output.txt", "a+");
+
+  for (long int e = 0; e < event_id; e++) {
+    long int kbest = max_idx_per_event[e];
+    fprintf(out, "k: %ld, centroids: ", max_idx_per_event[e] + 1);
+    for (i=0; i < kbest+1; i++) {
+        fprintf(out, "(");
+        for (j=0; j < DIMENSIONS; j++)
+          fprintf(out, "%.4f ", all_centroids[e][kbest][i*DIMENSIONS+j]);
+        fprintf(out, ") ");
+    }
+  fprintf(out, "\n");
   }
-  fprintf(file, "\n");
-  fclose(file);
+
+  fclose(out);
 
 
 } /* end main */
@@ -227,16 +258,12 @@ int init_array_rand(arr_ptr v, long int row_len, long int col_len)
   else return 0;
 }
 
-int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, char *filename)
+int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, FILE *file)
 {
   long int i;
   float dummy1;
   int dummy2;
-  FILE *file = fopen(filename, "r");
-  if (!file) {
-    printf("Couldn't open file %s\n", filename);
-    return 0;
-  }
+  int got_data = 0;
 
   char line[256];
   i = 0;
@@ -244,10 +271,9 @@ int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_le
   while (fgets(line, sizeof(line), file) && i < row_len) {
         line[strcspn(line, "\n")] = '\0';
 
-        /* Skip event header and separator lines */
-        if (strncmp(line, "Event", 5) == 0 || strcmp(line, "----") == 0) {
-            continue;
-        }
+        // Parse by event (not entire file at once)
+        if (strncmp(line, "Event", 5) == 0) continue;
+        if (strcmp(line, "----") == 0) return 1;  // end of this event
 
         float weights, eta, phi, mass;
         int id;
@@ -262,9 +288,9 @@ int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_le
         etaphi->data[i*2]     = eta;
         etaphi->data[i*2 + 1] = phi;
         i++;
+        got_data = 1;
       }
-    fclose(file);
-    return 1;
+    return got_data;  // 0 if EOF with nothing read
 }
 
 /* print all elements of an array */
@@ -353,9 +379,16 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
       /* Accumulate pT-weighted coordinates into the nearest centroid's sum,
          and add this point's weighted distance to the total inertia */
       for (i = 0; i < dimensions; i++) {
-        centroids_tmp_data[min_dist_centroid*dimensions+i] += weights->data[j] * data[j*dimensions+i];
-        weight_squared_diff += weights->data[j] * min_dist;
+        data_t val = data[j*dimensions+i];
+        /* Handle periodicity in phi for the centroid mean */
+        if (i == 1) {
+          data_t d = val - centroid_data[min_dist_centroid*dimensions+i];
+          if (d >  M_PI) val -= 2*M_PI;
+          if (d < -M_PI) val += 2*M_PI;
+        }
+        centroids_tmp_data[min_dist_centroid*dimensions+i] += weights->data[j] * val;
       }
+      weight_squared_diff += weights->data[j] * min_dist;
       counts[min_dist_centroid] += weights->data[j];
     }
 
@@ -366,6 +399,11 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
         for (i = 0; i < dimensions; i++) {
           centroids_tmp_data[m*dimensions+i] /= counts[m];
           printf("%.4f ", centroids_tmp_data[m*dimensions+i]);
+        }
+        /* Wrap the averaged phi back into [-pi, pi] */
+        if (dimensions > 1) {
+          if (centroids_tmp_data[m*dimensions+1] >  M_PI) centroids_tmp_data[m*dimensions+1] -= 2*M_PI;
+          if (centroids_tmp_data[m*dimensions+1] < -M_PI) centroids_tmp_data[m*dimensions+1] += 2*M_PI;
         }
         printf("\n");
       } else {
