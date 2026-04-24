@@ -6,3 +6,4 @@
 !.gitignore
 !*.md
 !*.cpp
+!*.py

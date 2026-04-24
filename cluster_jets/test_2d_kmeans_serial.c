@@ -81,10 +81,10 @@ int main(int argc, char *argv[])
     //     init_array_rand(pT, ARRAY_LEN, 1);
     //     }
     // else {
-    //     init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, "../event_generating/events.txt");
+    //     init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, "../generate_events/events.txt");
     // }   
 
-    FILE *file = fopen("../event_generating/events.txt", "r");
+    FILE *file = fopen("../generate_events/events.txt", "r");
     if (!file) {
       printf("Couldn't open file\n");
       return 1;
