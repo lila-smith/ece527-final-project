@@ -26,7 +26,6 @@
 #define PT_CUT 80.0
 
 #define RAND 0
-#define NUM_EVENTS 100
 #define DEBUG 0
 
 
@@ -63,11 +62,12 @@ int main(int argc, char *argv[])
   int *iterations;
   long int i, j, k, max_idx;
   data_t total_diff, second_diff, max_second_diff;
-  int all_iterations[NUM_EVENTS][K_MAX];
-  data_t all_diffs[NUM_EVENTS][K_MAX];
-  data_t all_centroids[NUM_EVENTS][K_MAX][K_MAX * DIMENSIONS];
-  data_t all_jet_pts[NUM_EVENTS][K_MAX][K_MAX];
-  long int max_idx_per_event[NUM_EVENTS];
+  /* Per-event scratch space (K_MAX-sized, reused each event).
+     The NUM_EVENTS dimension is gone — we no longer accumulate across events. */
+  int per_k_iterations[K_MAX];
+  data_t per_k_diffs[K_MAX];
+  data_t per_k_centroids[K_MAX][K_MAX * DIMENSIONS];
+  data_t per_k_jet_pts[K_MAX][K_MAX];
   long int event_id = 0;
 
   printf("k-means test\n");
@@ -90,6 +90,14 @@ int main(int argc, char *argv[])
     printf("Couldn't open file\n");
     return 1;
   }
+  /* Open the output file BEFORE the timed loop so we can stream into it */
+  FILE *out = fopen("jets.txt", "w");
+  if (!out)
+  {
+    printf("Couldn't open jets.txt for writing\n");
+    fclose(file);
+    return 1;
+  }
 
   // Begin timed section
   wakeup = wakeup_delay();
@@ -99,8 +107,6 @@ int main(int argc, char *argv[])
   while (init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file))
   {
     event_id++;
-    max_second_diff = -1000000.0;
-    max_idx = 0;
     /* Run k-means for each value of k from 1 to K_MAX, storing results */
     for (k = 1; k <= K_MAX; k++)
     {
@@ -108,31 +114,21 @@ int main(int argc, char *argv[])
       init_array_rand(centroids, K_MAX, DIMENSIONS);
       init_array_rand(centroids_tmp, K_MAX, DIMENSIONS);
       kmeans(v0, pT, centroids, centroids_tmp, jet_pts, ITERS, (int)floor(CONVERGENCE_THRESH * ARRAY_LEN), iterations, &total_diff, k);
-      /* Store results for this k to print/analyze after all runs complete */
-      all_iterations[event_id - 1][k - 1] = *iterations;
-      all_diffs[event_id - 1][k - 1] = total_diff;
-      memcpy(all_centroids[event_id - 1][k - 1], centroids->data, K_MAX * DIMENSIONS * sizeof(data_t));
-      memcpy(all_jet_pts[event_id - 1][k - 1], jet_pts, K_MAX * sizeof(data_t));
+      /* Store results for this k (per-event scratch) */
+      per_k_iterations[k - 1] = *iterations;
+      per_k_diffs[k - 1] = total_diff;
+      memcpy(per_k_centroids[k - 1], centroids->data, K_MAX * DIMENSIONS * sizeof(data_t));
+      memcpy(per_k_jet_pts[k - 1], jet_pts, K_MAX * sizeof(data_t));
     }
-  }
 
-  fclose(file);
-  clock_gettime(CLOCK_REALTIME, &time_stop);
-  time_taken = interval(time_start, time_stop);
-  /* Elbow method: compute the 2nd discrete difference of total_diff.
-     The inertia (total_diff) always decreases with more clusters; the 2nd
-     difference finds where the rate of decrease sharply flattens (the "elbow"),
-     indicating the most efficient number of clusters. */
-  if (DEBUG)
-  printf("\n--- Elbow (2nd difference of total_diff) ---\n");
-  for (long int e = 0; e < event_id; e++)
-  {
+    /* Elbow method (per-event): 2nd discrete difference of total_diff */
+    if (DEBUG)
+    printf("\n--- Elbow (2nd difference of total_diff) ---\n");
     max_second_diff = -1.0;
     max_idx = 2;
     for (k = 2; k < K_MAX - 1; k++)
     {
-      second_diff = all_diffs[e][k + 1] - 2 * all_diffs[e][k] + all_diffs[e][k - 1];
-      /* Track the k with the largest 2nd difference — that is the elbow */
+      second_diff = per_k_diffs[k + 1] - 2 * per_k_diffs[k] + per_k_diffs[k - 1];
       if (second_diff > max_second_diff)
       {
         max_second_diff = second_diff;
@@ -141,70 +137,46 @@ int main(int argc, char *argv[])
       if (DEBUG)
       printf("k = %ld: %.4f\n", k + 1, second_diff);
     }
-    max_idx_per_event[e] = max_idx;
-  }
 
-
-  /* Print stored results for every k value */
-  if (DEBUG)
-  {
-  printf("\n--- Results ---\n");
-  for (long int e = 0; e < event_id; e++)
-  {
-    printf("\n=== Event %ld ===\n", e + 1);
-    for (k = 1; k <= K_MAX; k++)
+    /* Print this event's results for every k value */
+    if (DEBUG)
     {
-      printf("\nk = %ld:\n", k);
-      printf("  Iterations:       %d\n", all_iterations[e][k - 1]);
-      printf("  Total difference: %f\n", all_diffs[e][k - 1]);
-      printf("  Centroids:\n");
-      /* Print each centroid's coordinates for this k */
-      for (i = 0; i < k; i++)
+      printf("\n=== Event %ld ===\n", event_id);
+      for (k = 1; k <= K_MAX; k++)
       {
-        printf("    ");
-        for (j = 0; j < DIMENSIONS; j++)
-          printf("%.4f ", all_centroids[e][k - 1][i * DIMENSIONS + j]);
-        printf("\n");
+        printf("\nk = %ld:\n", k);
+        printf("  Iterations:       %d\n", per_k_iterations[k - 1]);
+        printf("  Total difference: %f\n", per_k_diffs[k - 1]);
+        printf("  Centroids:\n");
+        for (i = 0; i < k; i++)
+        {
+          printf("    ");
+          for (j = 0; j < DIMENSIONS; j++)
+            printf("%.4f ", per_k_centroids[k - 1][i * DIMENSIONS + j]);
+          printf("\n");
         }
       }
     }
-  }
-  
-  printf("\n Events, Time (sec)");
-  printf("\n%ld, %f\n", event_id, interval(time_start, time_stop));
 
-  // Write the found jets as (pT η φ), where (η, φ) is the k-means centroid
-  FILE *out = fopen("jets.txt", "w");
-
-  for (long int e = 0; e < event_id; e++)
-  {
-    long int kbest = max_idx_per_event[e];
-    fprintf(out, "event %ld njets %ld jets:", e + 1, kbest + 1);
+    /* Stream this event's jets to file immediately */
+    long int kbest = max_idx;
+    fprintf(out, "event %ld njets %ld jets:", event_id, kbest + 1);
     for (i = 0; i < kbest + 1; i++)
     {
-      fprintf(out, " (%.4f %.4f %.4f)", all_jet_pts[e][kbest][i], all_centroids[e][kbest][i * DIMENSIONS], all_centroids[e][kbest][i * DIMENSIONS + 1]);
+      fprintf(out, " (%.4f %.4f %.4f)", per_k_jet_pts[kbest][i],
+              per_k_centroids[kbest][i * DIMENSIONS],
+              per_k_centroids[kbest][i * DIMENSIONS + 1]);
     }
     fprintf(out, "\n");
   }
 
+  fclose(file);
   fclose(out);
+  clock_gettime(CLOCK_REALTIME, &time_stop);
+  time_taken = interval(time_start, time_stop);
 
-  // Also append the original centroids-only format with optimal k to other output file
-  // FILE *out2 = fopen("kmeans_output.txt", "+a");
-
-  // for (long int e = 0; e < event_id; e++) {
-  //   long int kbest = max_idx_per_event[e];
-  //   fprintf(out2, "k: %ld, centroids: ", max_idx_per_event[e] + 1);
-  //   for (i=0; i < kbest+1; i++) {
-  //       fprintf(out2, "(");
-  //       for (j=0; j < DIMENSIONS; j++)
-  //         fprintf(out2, "%.4f ", all_centroids[e][kbest][i*DIMENSIONS+j]);
-  //       fprintf(out2, ") ");
-  //   }
-  // fprintf(out2, "\n");
-  // }
-
-  // fclose(out2);
+  printf("\n Events, Time (sec)");
+  printf("\n%ld, %f\n", event_id, time_taken);
 
 } /* end main */
 
