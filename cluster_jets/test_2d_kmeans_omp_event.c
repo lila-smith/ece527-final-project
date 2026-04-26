@@ -2,7 +2,7 @@
 
 
 
-   gcc -O1 test_2d_kmeans_serial.c -lm -o test_2d_kmeans_serial
+   gcc -O1 -fopenmp test_2d_kmeans_serial.c -lm -o test_2d_kmeans_serial
 
  */
 
@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <omp.h>
 
 #define ARRAY_LEN 100
 #define DIMENSIONS 2
@@ -25,8 +26,9 @@
 #define K_MAX 20
 #define PT_CUT 80.0
 
-#define RAND 0
+#define RAND_SEED 12345
 #define DEBUG 0
+#define THREADS 4
 
 typedef float data_t;
 
@@ -51,6 +53,44 @@ double interval(struct timespec start, struct timespec end);
 double wakeup_delay();
 
 void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int *iterations, data_t *total_diff, int k);
+void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out);
+void kmeans_omp_events(FILE *file, FILE *out, long int *event_id);
+/******************************************************************************/
+void detect_threads_setting()
+{
+  long int i, ognt;
+  char *env_ONT;
+
+  /* Find out how many threads OpenMP thinks it is wants to use */
+#pragma omp parallel for
+  for (i = 0; i < 1; i++)
+  {
+    ognt = omp_get_num_threads();
+  }
+
+  printf("omp's default number of threads is %ld\n", ognt);
+
+  /* If this is illegal (0 or less), default to the "#define THREADS"
+     value that is defined above */
+  if (ognt <= 0)
+  {
+    if (THREADS != ognt)
+    {
+      printf("Overriding with #define THREADS value %d\n", THREADS);
+      ognt = THREADS;
+    }
+  }
+
+  omp_set_num_threads(ognt);
+
+  /* Once again ask OpenMP how many threads it is going to use */
+#pragma omp parallel for
+  for (i = 0; i < 1; i++)
+  {
+    ognt = omp_get_num_threads();
+  }
+  printf("Using %ld threads for OpenMP\n", ognt);
+}
 
 /*****************************************************************************/
 int main(int argc, char *argv[])
@@ -61,22 +101,9 @@ int main(int argc, char *argv[])
   int *iterations;
   long int i, j, k, max_idx;
   data_t total_diff, second_diff, max_second_diff;
-  /* Per-event scratch space (K_MAX-sized, reused each event).
-     The NUM_EVENTS dimension is gone — we no longer accumulate across events. */
-  int per_k_iterations[K_MAX];
-  data_t per_k_diffs[K_MAX];
-  data_t per_k_centroids[K_MAX][K_MAX * DIMENSIONS];
-  data_t per_k_jet_pts[K_MAX][K_MAX];
-  data_t *centroids;
   long int event_id = 0;
 
-  printf("k-means test\n");
-
-  /* declare and initialize the array */
-  arr_ptr v0 = new_array(ARRAY_LEN, DIMENSIONS);
-  arr_ptr pT = new_array(ARRAY_LEN, 1);
-  iterations = (int *)malloc(sizeof(int));
-  centroids = (data_t *)malloc(K_MAX * DIMENSIONS * sizeof(data_t));
+  detect_threads_setting();
 
   data_t *jet_pts = (data_t *)malloc(K_MAX * sizeof(data_t));
 
@@ -99,79 +126,12 @@ int main(int argc, char *argv[])
   // Begin timed section
   wakeup = wakeup_delay();
   clock_gettime(CLOCK_REALTIME, &time_start);
-
-  // START EVENT LOOP
-  while (init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file))
-  {
-    event_id++;
-    /* Run k-means for each value of k from 1 to K_MAX, storing results */
-    for (k = 1; k <= K_MAX; k++)
-    {
-      /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
-      kmeans(v0, pT, centroids, jet_pts, iterations, &total_diff, k);
-      /* Store results for this k (per-event scratch) */
-      per_k_iterations[k - 1] = *iterations;
-      per_k_diffs[k - 1] = total_diff;
-      memcpy(per_k_centroids[k - 1], centroids, K_MAX * DIMENSIONS * sizeof(data_t));
-      memcpy(per_k_jet_pts[k - 1], jet_pts, K_MAX * sizeof(data_t));
-    }
-
-    /* Elbow method (per-event): 2nd discrete difference of total_diff */
-    if (DEBUG)
-      printf("\n--- Elbow (2nd difference of total_diff) ---\n");
-    max_second_diff = -1.0;
-    max_idx = 2;
-    for (k = 2; k < K_MAX - 1; k++)
-    {
-      second_diff = per_k_diffs[k + 1] - 2 * per_k_diffs[k] + per_k_diffs[k - 1];
-      if (second_diff > max_second_diff)
-      {
-        max_second_diff = second_diff;
-        max_idx = k;
-      }
-      if (DEBUG)
-        printf("k = %ld: %.4f\n", k + 1, second_diff);
-    }
-
-    /* Print this event's results for every k value */
-    if (DEBUG)
-    {
-      printf("\n=== Event %ld ===\n", event_id);
-      for (k = 1; k <= K_MAX; k++)
-      {
-        printf("\nk = %ld:\n", k);
-        printf("  Iterations:       %d\n", per_k_iterations[k - 1]);
-        printf("  Total difference: %f\n", per_k_diffs[k - 1]);
-        printf("  Centroids:\n");
-        for (i = 0; i < k; i++)
-        {
-          printf("    ");
-          for (j = 0; j < DIMENSIONS; j++)
-            printf("%.4f ", per_k_centroids[k - 1][i * DIMENSIONS + j]);
-          printf("\n");
-        }
-      }
-    }
-
-    /* Stream this event's jets to file immediately */
-    long int kbest = max_idx;
-    fprintf(out, "event %ld njets %ld jets:", event_id, kbest + 1);
-    for (i = 0; i < kbest + 1; i++)
-    {
-      fprintf(out, " (%.4f %.4f %.4f)", per_k_jet_pts[kbest][i],
-              per_k_centroids[kbest][i * DIMENSIONS],
-              per_k_centroids[kbest][i * DIMENSIONS + 1]);
-    }
-    fprintf(out, "\n");
-  }
-
-  fclose(file);
-  fclose(out);
+  kmeans_omp_events(file, out, &event_id);
   clock_gettime(CLOCK_REALTIME, &time_stop);
   time_taken = interval(time_start, time_stop);
 
-  printf("\n Events, Time (sec)");
-  printf("\n%ld, %f\n", event_id, time_taken);
+  printf("\n kmeans OMP_Events, Time (sec), Threads");
+  printf("\n%ld, %f, %d\n", event_id, time_taken, omp_get_num_threads());
 
 } /* end main */
 
@@ -410,10 +370,12 @@ void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int 
   /* Start moved_points above threshold so the loop runs at least once */
   int moved_points = CONVERGENCE_THRESH * 10;
 
-  /* Randomize initial centroids */
-  for (i = 0; i < K_MAX * DIMENSIONS; i++)
+  /* Randomize initial centroids using a thread-safe per-call seed.
+     XOR with k and the data pointer to get different starts for each k. */
+  unsigned int seed = (unsigned int)(RAND_SEED ^ (unsigned int)k ^ (unsigned int)(size_t)v);
+  for (i = 0; i < k * DIMENSIONS; i++)
   {
-    centroid_data[i] = (data_t)(fRand((double)(MINVAL), (double)(MAXVAL)));
+    centroid_data[i] = (data_t)(rand_r(&seed) / (double)RAND_MAX) * (MAXVAL - MINVAL) + MINVAL;
   }
 
   if (DEBUG)
@@ -541,71 +503,151 @@ void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int 
   free(py);
 }
 
-// void kmeans_omp(arr_ptr v, arr_ptr weights, data_t *jet_pts, int *iterations, data_t *total_diff, int k)
-// {
-//   /* Run k-means for each value of k from 1 to K_MAX, storing results */
-//     for (k = 1; k <= K_MAX; k++)
-//     {
-//       /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
-//       for (i = 0; i < row_len * col_len; i++)
-//       {
-//         v->data[i] = (data_t)(fRand((double)(MINVAL), (double)(MAXVAL)));
-//       }
-//     (centroids, K_MAX, DIMENSIONS);
-//       init_array_rand(centroids_tmp, K_MAX, DIMENSIONS);
-//       kmeans(v0, pT, jet_pts, iterations, &total_diff, k);
-//       /* Store results for this k (per-event scratch) */
-//       per_k_iterations[k - 1] = *iterations;
-//       per_k_diffs[k - 1] = total_diff;
-//       memcpy(per_k_centroids[k - 1], centroids->data, K_MAX * DIMENSIONS * sizeof(data_t));
-//       memcpy(per_k_jet_pts[k - 1], jet_pts, K_MAX * sizeof(data_t));
-//     }
+void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
+{
+  long int i, j, k, max_idx;
+  int *iterations;
+  data_t total_diff, max_second_diff, second_diff;
+  int per_k_iterations[K_MAX];
+  data_t per_k_diffs[K_MAX];
+  data_t per_k_centroids[K_MAX][K_MAX * DIMENSIONS];
+  data_t per_k_jet_pts[K_MAX][K_MAX];
+  data_t *centroids = (data_t *)malloc(K_MAX * DIMENSIONS * sizeof(data_t));
+  data_t *jet_pts = (data_t *)malloc(K_MAX * sizeof(data_t));
+  iterations = (int *)malloc(sizeof(int));
+  /* Run k-means for each value of k from 1 to K_MAX, storing results */
+  for (k = 1; k <= K_MAX; k++)
+  {
+    /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
+    kmeans(v, weights, centroids, jet_pts, iterations, &total_diff, k);
+    /* Store results for this k (per-event scratch) */
+    per_k_iterations[k - 1] = *iterations;
+    per_k_diffs[k - 1] = total_diff;
+    memcpy(per_k_centroids[k - 1], centroids, K_MAX * DIMENSIONS * sizeof(data_t));
+    memcpy(per_k_jet_pts[k - 1], jet_pts, K_MAX * sizeof(data_t));
+  }
 
-//     /* Elbow method (per-event): 2nd discrete difference of total_diff */
-//     if (DEBUG)
-//       printf("\n--- Elbow (2nd difference of total_diff) ---\n");
-//     max_second_diff = -1.0;
-//     max_idx = 2;
-//     for (k = 2; k < K_MAX - 1; k++)
-//     {
-//       second_diff = per_k_diffs[k + 1] - 2 * per_k_diffs[k] + per_k_diffs[k - 1];
-//       if (second_diff > max_second_diff)
-//       {
-//         max_second_diff = second_diff;
-//         max_idx = k;
-//       }
-//       if (DEBUG)
-//         printf("k = %ld: %.4f\n", k + 1, second_diff);
-//     }
+  /* Elbow method (per-event): 2nd discrete difference of total_diff */
+  if (DEBUG)
+    printf("\n--- Elbow (2nd difference of total_diff) ---\n");
+  max_second_diff = -1.0;
+  max_idx = 2;
+  for (k = 2; k < K_MAX - 1; k++)
+  {
+    second_diff = per_k_diffs[k + 1] - 2 * per_k_diffs[k] + per_k_diffs[k - 1];
+    if (second_diff > max_second_diff)
+    {
+      max_second_diff = second_diff;
+      max_idx = k;
+    }
+    if (DEBUG)
+      printf("k = %ld: %.4f\n", k + 1, second_diff);
+  }
 
-//     /* Print this event's results for every k value */
-//     if (DEBUG)
-//     {
-//       printf("\n=== Event %ld ===\n", event_id);
-//       for (k = 1; k <= K_MAX; k++)
-//       {
-//         printf("\nk = %ld:\n", k);
-//         printf("  Iterations:       %d\n", per_k_iterations[k - 1]);
-//         printf("  Total difference: %f\n", per_k_diffs[k - 1]);
-//         printf("  Centroids:\n");
-//         for (i = 0; i < k; i++)
-//         {
-//           printf("    ");
-//           for (j = 0; j < DIMENSIONS; j++)
-//             printf("%.4f ", per_k_centroids[k - 1][i * DIMENSIONS + j]);
-//           printf("\n");
-//         }
-//       }
-//     }
+  /* Print this event's results for every k value */
+  if (DEBUG)
+  {
+    printf("\n=== Event %ld ===\n", event_id);
+    for (k = 1; k <= K_MAX; k++)
+    {
+      printf("\nk = %ld:\n", k);
+      printf("  Iterations:       %d\n", per_k_iterations[k - 1]);
+      printf("  Total difference: %f\n", per_k_diffs[k - 1]);
+      printf("  Centroids:\n");
+      for (i = 0; i < k; i++)
+      {
+        printf("    ");
+        for (j = 0; j < DIMENSIONS; j++)
+          printf("%.4f ", per_k_centroids[k - 1][i * DIMENSIONS + j]);
+        printf("\n");
+      }
+    }
+  }
 
-//     /* Stream this event's jets to file immediately */
-//     long int kbest = max_idx;
-//     fprintf(out, "event %ld njets %ld jets:", event_id, kbest + 1);
-//     for (i = 0; i < kbest + 1; i++)
-//     {
-//       fprintf(out, " (%.4f %.4f %.4f)", per_k_jet_pts[kbest][i],
-//               per_k_centroids[kbest][i * DIMENSIONS],
-//               per_k_centroids[kbest][i * DIMENSIONS + 1]);
-//     }
-//     fprintf(out, "\n");
-// }
+  /* Stream this event's jets to file immediately — no critical needed:
+     each thread writes to its own file */
+  long int kbest = max_idx;
+  fprintf(out, "event %ld njets %ld jets:", event_id, kbest + 1);
+  for (i = 0; i < kbest + 1; i++)
+  {
+    fprintf(out, " (%.4f %.4f %.4f)", per_k_jet_pts[kbest][i],
+            per_k_centroids[kbest][i * DIMENSIONS],
+            per_k_centroids[kbest][i * DIMENSIONS + 1]);
+  }
+  fprintf(out, "\n");
+}
+
+void kmeans_omp_events(FILE *file, FILE *out, long int *all_event_id)
+{
+  int collecting_data = 1;
+  long int event_id = 0;
+  int nthreads = 0;
+  FILE **thread_files = NULL;
+  char **thread_filenames = NULL;
+
+#pragma omp parallel
+#pragma omp single
+  {
+    /* Open one temporary output file per thread */
+    nthreads = omp_get_num_threads();
+    thread_files = (FILE **)malloc(nthreads * sizeof(FILE *));
+    thread_filenames = (char **)malloc(nthreads * sizeof(char *));
+    for (int t = 0; t < nthreads; t++)
+    {
+      thread_filenames[t] = (char *)malloc(32);
+      snprintf(thread_filenames[t], 32, "jets_thread_%d.txt", t);
+      thread_files[t] = fopen(thread_filenames[t], "w");
+    }
+
+    while (collecting_data)
+    {
+      arr_ptr v0 = new_array(ARRAY_LEN, DIMENSIONS);
+      arr_ptr pT = new_array(ARRAY_LEN, 1);
+      collecting_data = init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file);
+      if (collecting_data)
+      {
+#pragma omp task firstprivate(v0, pT, event_id) shared(thread_files)
+        {
+          /* Each task writes to the file owned by whichever thread runs it */
+          kmeans_all_k(v0, pT, event_id, thread_files[omp_get_thread_num()]);
+          free(v0->data); free(v0);
+          free(pT->data); free(pT);
+        }
+        event_id++;
+      }
+      else
+      {
+        /* EOF — no task spawned; free immediately */
+        free(v0->data); free(v0);
+        free(pT->data); free(pT);
+        break;
+      }
+    }
+#pragma omp taskwait
+
+    /* All tasks done — close thread files and concatenate into main output.
+       Note: events within each thread file are ordered, but across threads
+       the final file order reflects task execution order, not event order. */
+    char buf[8192];
+    size_t n;
+    for (int t = 0; t < nthreads; t++)
+    {
+      fclose(thread_files[t]);
+      FILE *tf = fopen(thread_filenames[t], "r");
+      if (tf)
+      {
+        while ((n = fread(buf, 1, sizeof(buf), tf)) > 0)
+          fwrite(buf, 1, n, out);
+        fclose(tf);
+        remove(thread_filenames[t]);
+      }
+      free(thread_filenames[t]);
+    }
+    free(thread_files);
+    free(thread_filenames);
+  }
+
+  fclose(file);
+  fclose(out);
+  *all_event_id = event_id;
+}
