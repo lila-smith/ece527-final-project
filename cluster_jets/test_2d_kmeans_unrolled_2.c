@@ -70,10 +70,6 @@ int main(int argc, char *argv[])
   data_t per_k_jet_pts[K_MAX][K_MAX];
   long int event_id = 0;
 
-  /* Optional command-line cap on number of events for timing sweeps */
-  long int max_events = LONG_MAX;
-  if (argc > 1) max_events = atol(argv[1]);
-
   printf("k-means test\n");
 
   /* declare and initialize the array */
@@ -106,7 +102,7 @@ int main(int argc, char *argv[])
   clock_gettime(CLOCK_REALTIME, &time_start);
 
   // START EVENT LOOP
-  while (event_id < max_events && init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file))
+  while (init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file))
   {
     event_id++;
     /* Run k-means for each value of k from 1 to K_MAX, storing results */
@@ -289,6 +285,10 @@ int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_le
   int dummy2;
   int got_data = 0;
 
+  /* Clear stale data from previous event */
+  memset(pT->data, 0, row_len * sizeof(data_t));
+  memset(etaphi->data, 0, row_len * col_len * sizeof(data_t));
+
   char line[256];
   i = 0;
   /* Read up to row_len particle lines from the file */
@@ -436,6 +436,9 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
       /* Find the closest centroid using squared Euclidean distance.
          2-accumulator unroll: process two centroids per iteration with
          independent dist_a / dist_b accumulators. */
+
+      /******* START DIFF W/ SERIAL *******/
+
       for (m = 0; m < k - 1; m += 2)
       {
         data_t dist_a = 0.0, dist_b = 0.0;
@@ -468,6 +471,9 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
             if (diff > M_PI)  diff -= 2 * M_PI;
             if (diff < -M_PI) diff += 2 * M_PI;
           }
+
+          /******* END DIFF W/ SERIAL *******/
+
           dist += diff * diff;
         }
         if (min_dist < 0.0 || dist < min_dist)
