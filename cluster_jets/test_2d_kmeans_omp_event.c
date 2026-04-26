@@ -504,6 +504,8 @@ void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
   long int i, j, k, max_idx;
   int *iterations;
   data_t total_diff, max_second_diff, second_diff;
+  char buf_write_file[512];
+  int len = 0;
   int per_k_iterations[K_MAX];
   data_t per_k_diffs[K_MAX];
   data_t per_k_centroids[K_MAX][K_MAX * DIMENSIONS];
@@ -562,17 +564,22 @@ void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
 
   /* Stream this event's jets to file immediately */
   long int kbest = max_idx;
-#pragma omp critical 
-  {
-    fprintf(out, "event %ld njets %ld jets:", event_id, kbest + 1);
-    for (i = 0; i < kbest + 1; i++)
-    {
-      fprintf(out, " (%.4f %.4f %.4f)", per_k_jet_pts[kbest][i],
-              per_k_centroids[kbest][i * DIMENSIONS],
-              per_k_centroids[kbest][i * DIMENSIONS + 1]);
-    }
-    fprintf(out, "\n");
-  }
+  /* Build output in a local buffer — done outside critical section */
+
+len += snprintf(buf_write_file + len, sizeof(buf_write_file) - len,
+                "event %ld njets %ld jets:", event_id, kbest + 1);
+for (i = 0; i < kbest + 1; i++) {
+    len += snprintf(buf_write_file + len, sizeof(buf_write_file) - len,
+                    " (%.4f %.4f %.4f)",
+                    per_k_jet_pts[kbest][i],
+                    per_k_centroids[kbest][i * DIMENSIONS],
+                    per_k_centroids[kbest][i * DIMENSIONS + 1]);
+}
+buf_write_file[len++] = '\n';
+
+/* Critical section is now just one fast fwrite */
+#pragma omp critical
+fwrite(buf_write_file, 1, len, out);
 }
 
 void kmeans_omp_events(FILE *file, FILE *out, long int *all_event_id) {
