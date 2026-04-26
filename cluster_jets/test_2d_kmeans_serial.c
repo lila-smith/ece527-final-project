@@ -27,6 +27,8 @@
 
 #define RAND 0
 #define NUM_EVENTS 100
+#define DEBUG 0
+
 
 typedef float data_t;
 
@@ -121,6 +123,7 @@ int main(int argc, char *argv[])
      The inertia (total_diff) always decreases with more clusters; the 2nd
      difference finds where the rate of decrease sharply flattens (the "elbow"),
      indicating the most efficient number of clusters. */
+  if (DEBUG)
   printf("\n--- Elbow (2nd difference of total_diff) ---\n");
   for (long int e = 0; e < event_id; e++)
   {
@@ -135,6 +138,7 @@ int main(int argc, char *argv[])
         max_second_diff = second_diff;
         max_idx = k;
       }
+      if (DEBUG)
       printf("k = %ld: %.4f\n", k + 1, second_diff);
     }
     max_idx_per_event[e] = max_idx;
@@ -142,6 +146,8 @@ int main(int argc, char *argv[])
 
 
   /* Print stored results for every k value */
+  if (DEBUG)
+  {
   printf("\n--- Results ---\n");
   for (long int e = 0; e < event_id; e++)
   {
@@ -159,6 +165,7 @@ int main(int argc, char *argv[])
         for (j = 0; j < DIMENSIONS; j++)
           printf("%.4f ", all_centroids[e][k - 1][i * DIMENSIONS + j]);
         printf("\n");
+        }
       }
     }
   }
@@ -432,6 +439,7 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
   /* Start moved_points above threshold so the loop runs at least once */
   int moved_points = convergence_thresh * 10;
 
+  if (DEBUG)
   printf("Running k-means with k = %d\n", k);
   /* Iterate until fewer than convergence_thresh points change cluster,
      or the maximum iteration count is reached */
@@ -442,6 +450,7 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
     memset(counts, 0, k * sizeof(data_t));
     memset(px, 0, k * sizeof(data_t));
     memset(py, 0, k * sizeof(data_t));
+    if (DEBUG)
     printf("Iteration %d: , Moved points: %d", iters, moved_points);
     int moved_points_tmp = 0;
     weight_squared_diff = 0.0;
@@ -510,6 +519,7 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
         for (i = 0; i < dimensions; i++)
         {
           centroids_tmp_data[m * dimensions + i] /= counts[m];
+          if (DEBUG)
           printf("%.4f ", centroids_tmp_data[m * dimensions + i]);
         }
         /* Wrap the averaged phi back into [-pi, pi] */
@@ -520,6 +530,7 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
           if (centroids_tmp_data[m * dimensions + 1] < -M_PI)
             centroids_tmp_data[m * dimensions + 1] += 2 * M_PI;
         }
+        if (DEBUG)
         printf("\n");
       }
       else
@@ -533,6 +544,7 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
       }
     }
 
+    if (DEBUG)
     printf("\n");
 
     memcpy(centroid_data, centroids_tmp_data, k * dimensions * sizeof(data_t));
