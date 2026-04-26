@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-
+if [ -f .venv/bin/activate ]; then
+    source .venv/bin/activate
+    echo "Activated virtual environment"
+    python3 -m pip install -r requirements.txt
+    echo "Installed Python dependencies"
+else
+    echo "No virtual environment found, proceeding without activation"
+fi
+make all
 ./run.sh 100
 ./run.sh 300
 ./run.sh 1000

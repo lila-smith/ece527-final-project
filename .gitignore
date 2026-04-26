@@ -8,3 +8,5 @@
 !*.cpp
 !*.py
 !*.sh
+.venv/
+!requirements.txt
