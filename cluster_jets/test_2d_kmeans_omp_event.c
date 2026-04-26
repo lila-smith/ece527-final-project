@@ -59,12 +59,11 @@ void kmeans_omp_events(FILE *file, FILE *out, long int *event_id);
 void detect_threads_setting()
 {
   long int i, ognt;
-  char *env_ONT;
+  char * env_ONT;
 
   /* Find out how many threads OpenMP thinks it is wants to use */
 #pragma omp parallel for
-  for (i = 0; i < 1; i++)
-  {
+  for(i=0; i<1; i++) {
     ognt = omp_get_num_threads();
   }
 
@@ -72,10 +71,8 @@ void detect_threads_setting()
 
   /* If this is illegal (0 or less), default to the "#define THREADS"
      value that is defined above */
-  if (ognt <= 0)
-  {
-    if (THREADS != ognt)
-    {
+  if (ognt <= 0) {
+    if (THREADS != ognt) {
       printf("Overriding with #define THREADS value %d\n", THREADS);
       ognt = THREADS;
     }
@@ -85,8 +82,7 @@ void detect_threads_setting()
 
   /* Once again ask OpenMP how many threads it is going to use */
 #pragma omp parallel for
-  for (i = 0; i < 1; i++)
-  {
+  for(i=0; i<1; i++) {
     ognt = omp_get_num_threads();
   }
   printf("Using %ld threads for OpenMP\n", ognt);
@@ -564,41 +560,28 @@ void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
     }
   }
 
-  /* Stream this event's jets to file immediately — no critical needed:
-     each thread writes to its own file */
+  /* Stream this event's jets to file immediately */
   long int kbest = max_idx;
-  fprintf(out, "event %ld njets %ld jets:", event_id, kbest + 1);
-  for (i = 0; i < kbest + 1; i++)
+#pragma omp critical 
   {
-    fprintf(out, " (%.4f %.4f %.4f)", per_k_jet_pts[kbest][i],
-            per_k_centroids[kbest][i * DIMENSIONS],
-            per_k_centroids[kbest][i * DIMENSIONS + 1]);
+    fprintf(out, "event %ld njets %ld jets:", event_id, kbest + 1);
+    for (i = 0; i < kbest + 1; i++)
+    {
+      fprintf(out, " (%.4f %.4f %.4f)", per_k_jet_pts[kbest][i],
+              per_k_centroids[kbest][i * DIMENSIONS],
+              per_k_centroids[kbest][i * DIMENSIONS + 1]);
+    }
+    fprintf(out, "\n");
   }
-  fprintf(out, "\n");
 }
 
-void kmeans_omp_events(FILE *file, FILE *out, long int *all_event_id)
-{
-  int collecting_data = 1;
-  long int event_id = 0;
-  int nthreads = 0;
-  FILE **thread_files = NULL;
-  char **thread_filenames = NULL;
-
+void kmeans_omp_events(FILE *file, FILE *out, long int *all_event_id) {
+  
+int collecting_data = 1;
+long int event_id = 0;
 #pragma omp parallel
 #pragma omp single
   {
-    /* Open one temporary output file per thread */
-    nthreads = omp_get_num_threads();
-    thread_files = (FILE **)malloc(nthreads * sizeof(FILE *));
-    thread_filenames = (char **)malloc(nthreads * sizeof(char *));
-    for (int t = 0; t < nthreads; t++)
-    {
-      thread_filenames[t] = (char *)malloc(32);
-      snprintf(thread_filenames[t], 32, "jets_thread_%d.txt", t);
-      thread_files[t] = fopen(thread_filenames[t], "w");
-    }
-
     while (collecting_data)
     {
       arr_ptr v0 = new_array(ARRAY_LEN, DIMENSIONS);
@@ -606,10 +589,10 @@ void kmeans_omp_events(FILE *file, FILE *out, long int *all_event_id)
       collecting_data = init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file);
       if (collecting_data)
       {
-#pragma omp task firstprivate(v0, pT, event_id) shared(thread_files)
+#pragma omp task firstprivate(v0, pT, event_id) shared(out)
         {
-          /* Each task writes to the file owned by whichever thread runs it */
-          kmeans_all_k(v0, pT, event_id, thread_files[omp_get_thread_num()]);
+          kmeans_all_k(v0, pT, event_id, out);
+          /* Free the per-event arrays allocated before the task was spawned */
           free(v0->data); free(v0);
           free(pT->data); free(pT);
         }
@@ -624,30 +607,12 @@ void kmeans_omp_events(FILE *file, FILE *out, long int *all_event_id)
       }
     }
 #pragma omp taskwait
-
-    /* All tasks done — close thread files and concatenate into main output.
-       Note: events within each thread file are ordered, but across threads
-       the final file order reflects task execution order, not event order. */
-    char buf[8192];
-    size_t n;
-    for (int t = 0; t < nthreads; t++)
-    {
-      fclose(thread_files[t]);
-      FILE *tf = fopen(thread_filenames[t], "r");
-      if (tf)
-      {
-        while ((n = fread(buf, 1, sizeof(buf), tf)) > 0)
-          fwrite(buf, 1, n, out);
-        fclose(tf);
-        remove(thread_filenames[t]);
-      }
-      free(thread_filenames[t]);
-    }
-    free(thread_files);
-    free(thread_filenames);
   }
 
   fclose(file);
   fclose(out);
   *all_event_id = event_id;
+
 }
+
+
