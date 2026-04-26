@@ -81,8 +81,6 @@ int main(int argc, char *argv[])
   arr_ptr centroids_tmp = new_array(K_MAX, DIMENSIONS);
   data_t *jet_pts = (data_t *)malloc(K_MAX * sizeof(data_t));
 
-  printf("Array size = %d x %d\n", ARRAY_LEN, DIMENSIONS);
-
   double acc = 0.0;
   FILE *file = fopen("../generate_events/events.txt", "r");
   if (!file)
