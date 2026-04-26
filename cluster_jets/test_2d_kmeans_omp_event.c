@@ -54,7 +54,9 @@ double wakeup_delay();
 
 void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int *iterations, data_t *total_diff, int k);
 void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out);
+void kmeans_all_k_omp(arr_ptr v, arr_ptr weights, long int event_id, FILE *out);
 void kmeans_omp_events(FILE *file, FILE *out, long int *event_id);
+void kmeans_omp_events_and_k(FILE *file, FILE *out, long int *event_id);
 /******************************************************************************/
 void detect_threads_setting()
 {
@@ -119,7 +121,7 @@ int main(int argc, char *argv[])
     return 1;
   }
 
-  // Begin timed section
+  // Begin timed section for OMP_Events
   wakeup = wakeup_delay();
   clock_gettime(CLOCK_REALTIME, &time_start);
   kmeans_omp_events(file, out, &event_id);
@@ -127,6 +129,21 @@ int main(int argc, char *argv[])
   time_taken = interval(time_start, time_stop);
 
   printf("\n kmeans OMP_Events, Time (sec), Threads");
+  printf("\n%ld, %f, %d\n", event_id, time_taken, omp_get_num_threads());
+
+  /* Reopen files — kmeans_omp_events closed them internally */
+  file = fopen("../generate_events/events.txt", "r");
+  if (!file) { printf("Couldn't reopen events file\n"); return 1; }
+  out = fopen("jets_omp_k.txt", "w");
+  if (!out) { printf("Couldn't open jets_omp_k.txt\n"); fclose(file); return 1; }
+
+  // Begin timed section for OMP_Events_and_k
+  clock_gettime(CLOCK_REALTIME, &time_start);
+  kmeans_omp_events_and_k(file, out, &event_id);
+  clock_gettime(CLOCK_REALTIME, &time_stop);
+  time_taken = interval(time_start, time_stop);
+
+  printf("\n kmeans OMP_Events_and_k, Time (sec), Threads");
   printf("\n%ld, %f, %d\n", event_id, time_taken, omp_get_num_threads());
 
 } /* end main */
@@ -524,6 +541,9 @@ void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
     memcpy(per_k_centroids[k - 1], centroids, K_MAX * DIMENSIONS * sizeof(data_t));
     memcpy(per_k_jet_pts[k - 1], jet_pts, K_MAX * sizeof(data_t));
   }
+  free(centroids);
+  free(jet_pts);
+  free(iterations);
 
   /* Elbow method (per-event): 2nd discrete difference of total_diff */
   if (DEBUG)
@@ -582,6 +602,91 @@ buf_write_file[len++] = '\n';
 fwrite(buf_write_file, 1, len, out);
 }
 
+
+void kmeans_all_k_omp(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
+{
+  long int i, j, k, max_idx;
+  data_t max_second_diff, second_diff;
+  char buf_write_file[512];
+  int len = 0;
+  int per_k_iterations[K_MAX];
+  data_t per_k_diffs[K_MAX];
+  data_t per_k_centroids[K_MAX][K_MAX * DIMENSIONS];
+  data_t per_k_jet_pts[K_MAX][K_MAX];
+
+  #pragma omp taskloop shared(per_k_iterations, per_k_diffs, per_k_centroids, per_k_jet_pts)
+  for (k = 1; k <= K_MAX; k++)
+  {
+    data_t total_diff;
+    data_t centroids[K_MAX * DIMENSIONS];
+    data_t jet_pts[K_MAX];
+    int iters;
+    kmeans(v, weights, centroids, jet_pts, &iters, &total_diff, k);
+    /* Each task writes to a different index, so no race on these arrays */
+    per_k_iterations[k - 1] = iters;
+    per_k_diffs[k - 1] = total_diff;
+    memcpy(per_k_centroids[k - 1], centroids, K_MAX * DIMENSIONS * sizeof(data_t));
+    memcpy(per_k_jet_pts[k - 1], jet_pts, K_MAX * sizeof(data_t));
+  }
+
+  /* Elbow method (per-event): 2nd discrete difference of total_diff */
+  if (DEBUG)
+    printf("\n--- Elbow (2nd difference of total_diff) ---\n");
+  max_second_diff = -1.0;
+  max_idx = 2;
+  for (k = 2; k < K_MAX - 1; k++)
+  {
+    second_diff = per_k_diffs[k + 1] - 2 * per_k_diffs[k] + per_k_diffs[k - 1];
+    if (second_diff > max_second_diff)
+    {
+      max_second_diff = second_diff;
+      max_idx = k;
+    }
+    if (DEBUG)
+      printf("k = %ld: %.4f\n", k + 1, second_diff);
+  }
+
+  /* Print this event's results for every k value */
+  if (DEBUG)
+  {
+    printf("\n=== Event %ld ===\n", event_id);
+    for (k = 1; k <= K_MAX; k++)
+    {
+      printf("\nk = %ld:\n", k);
+      printf("  Iterations:       %d\n", per_k_iterations[k - 1]);
+      printf("  Total difference: %f\n", per_k_diffs[k - 1]);
+      printf("  Centroids:\n");
+      for (i = 0; i < k; i++)
+      {
+        printf("    ");
+        for (j = 0; j < DIMENSIONS; j++)
+          printf("%.4f ", per_k_centroids[k - 1][i * DIMENSIONS + j]);
+        printf("\n");
+      }
+    }
+  }
+
+  /* Stream this event's jets to file immediately */
+  long int kbest = max_idx;
+  /* Build output in a local buffer — done outside critical section */
+
+len += snprintf(buf_write_file + len, sizeof(buf_write_file) - len,
+                "event %ld njets %ld jets:", event_id, kbest + 1);
+for (i = 0; i < kbest + 1; i++) {
+    len += snprintf(buf_write_file + len, sizeof(buf_write_file) - len,
+                    " (%.4f %.4f %.4f)",
+                    per_k_jet_pts[kbest][i],
+                    per_k_centroids[kbest][i * DIMENSIONS],
+                    per_k_centroids[kbest][i * DIMENSIONS + 1]);
+}
+buf_write_file[len++] = '\n';
+
+/* Critical section is now just one fast fwrite */
+#pragma omp critical
+fwrite(buf_write_file, 1, len, out);
+}
+
+
 void kmeans_omp_events(FILE *file, FILE *out, long int *all_event_id) {
   
 int collecting_data = 1;
@@ -622,4 +727,42 @@ long int event_id = 0;
 
 }
 
+void kmeans_omp_events_and_k(FILE *file, FILE *out, long int *all_event_id) {
+  
+int collecting_data = 1;
+long int event_id = 0;
+#pragma omp parallel
+#pragma omp single
+  {
+    while (collecting_data)
+    {
+      arr_ptr v0 = new_array(ARRAY_LEN, DIMENSIONS);
+      arr_ptr pT = new_array(ARRAY_LEN, 1);
+      collecting_data = init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file);
+      if (collecting_data)
+      {
+#pragma omp task firstprivate(v0, pT, event_id) shared(out)
+        {
+          kmeans_all_k_omp(v0, pT, event_id, out);
+          /* Free the per-event arrays allocated before the task was spawned */
+          free(v0->data); free(v0);
+          free(pT->data); free(pT);
+        }
+        event_id++;
+      }
+      else
+      {
+        /* EOF — no task spawned; free immediately */
+        free(v0->data); free(v0);
+        free(pT->data); free(pT);
+        break;
+      }
+    }
+#pragma omp taskwait
+  }
 
+  fclose(file);
+  fclose(out);
+  *all_event_id = event_id;
+
+}
