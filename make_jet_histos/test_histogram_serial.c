@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define MAX_EVENTS 1000
 #define MAX_JETS 20
@@ -50,6 +51,8 @@ void write_hist(char *filename, int *hist, int nbins, data_t min, data_t max);
 data_t delta_phi(data_t phi1, data_t phi2);
 data_t dijet_mass(data_t pt1, data_t eta1, data_t phi1, data_t pt2, data_t eta2, data_t phi2);
 void leading_two(event_t *ev, int *i1, int *i2);
+double interval(struct timespec start, struct timespec end);
+double wakeup_delay();
 
 /*****************************************************************************/
 int main(int argc, char *argv[])
@@ -57,10 +60,13 @@ int main(int argc, char *argv[])
   event_t *events = (event_t *) calloc(MAX_EVENTS, sizeof(event_t));
   int n_events, e, j, i1, i2;
   data_t pt1, pt2, eta1, eta2, phi1, phi2, deta, dphi, dr, mjj;
+  double wakeup, time_taken;
+  struct timespec time_start, time_stop;
 
   printf("histogram test\n");
 
   n_events = read_events("../cluster_jets/jets.txt", events, MAX_EVENTS);
+  
   printf("Read %d events from jets.txt\n", n_events);
 
   /* Allocate histograms */
@@ -71,6 +77,9 @@ int main(int argc, char *argv[])
   int *h_dr         = (int *) calloc(DR_NBINS,    sizeof(int));
   int *h_dphi       = (int *) calloc(DPHI_NBINS,  sizeof(int));
   int *h_njets      = (int *) calloc(NJETS_NBINS, sizeof(int));
+
+  wakeup = wakeup_delay();
+  clock_gettime(CLOCK_REALTIME, &time_start);
 
   /* Event loop - each iteration is independent, so this is the loop to
      parallelize over (threads / OpenMP / etc.) in later stages */
@@ -103,6 +112,9 @@ int main(int argc, char *argv[])
     fill_hist(h_mass,       MASS_NBINS, MASS_MIN, MASS_MAX, mjj);
   }
 
+  clock_gettime(CLOCK_REALTIME, &time_stop);
+  time_taken = interval(time_start, time_stop);
+
   /* Write out one file per histogram: "bin_center count" per line */
   write_hist("hist_jet_pt.txt",      h_pt,         PT_NBINS,    PT_MIN,    PT_MAX);
   write_hist("hist_pt_lead.txt",     h_pt_lead,    PT_NBINS,    PT_MIN,    PT_MAX);
@@ -113,6 +125,8 @@ int main(int argc, char *argv[])
   write_hist("hist_njets.txt",       h_njets,      NJETS_NBINS, NJETS_MIN, NJETS_MAX);
 
   printf("Wrote hist_*.txt\n");
+  printf("Events, Time (sec)\n");
+  printf("%d, %f\n", n_events, time_taken);
 
   free(events);
   free(h_pt); free(h_pt_lead); free(h_pt_sublead);
@@ -121,6 +135,44 @@ int main(int argc, char *argv[])
 } /* end main */
 
 /*********************************/
+
+/* Timing helper */
+double interval(struct timespec start, struct timespec end)
+{
+  struct timespec temp;
+  temp.tv_sec = end.tv_sec - start.tv_sec;
+  temp.tv_nsec = end.tv_nsec - start.tv_nsec;
+  if (temp.tv_nsec < 0)
+  {
+    temp.tv_sec = temp.tv_sec - 1;
+    temp.tv_nsec = temp.tv_nsec + 1000000000;
+  }
+  return (((double)temp.tv_sec) + ((double)temp.tv_nsec) * 1.0e-9);
+}
+
+/* CPU warmup */
+double wakeup_delay()
+{
+  double meas = 0;
+  int i, j;
+  struct timespec time_start, time_stop;
+  double quasi_random = 0;
+
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_start);
+  j = 100;
+
+  while (meas < 1.0)
+  {
+    for (i = 1; i < j; i++)
+    {
+      quasi_random = quasi_random * quasi_random - 1.923432;
+    }
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time_stop);
+    meas = interval(time_start, time_stop);
+    j *= 2;
+  }
+  return quasi_random;
+}
 
 /* Parse jets.txt into an events array. Line format:
      event N njets K jets: (pT eta phi) (pT eta phi) ... */
