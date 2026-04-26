@@ -287,6 +287,10 @@ int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_le
   int dummy2;
   int got_data = 0;
 
+  /* Clear stale data from previous event */
+  memset(pT->data, 0, row_len * sizeof(data_t));
+  memset(etaphi->data, 0, row_len * col_len * sizeof(data_t));
+
   char line[256];
   i = 0;
   /* Read up to row_len particle lines from the file */

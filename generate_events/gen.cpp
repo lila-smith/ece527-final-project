@@ -87,12 +87,12 @@ std::vector<Particle> generate_event(int n_particles, std::mt19937 &gen) {
     return event;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     std::ofstream out("events.txt");
 
     std::mt19937 gen(42); // fixed seed for reproducibility
 
-    int n_events = 100;
+    int n_events = (argc > 1) ? std::atoi(argv[1]) : 100;
     int particles_per_event = 20;
 
     for (int i = 0; i < n_events; i++) {

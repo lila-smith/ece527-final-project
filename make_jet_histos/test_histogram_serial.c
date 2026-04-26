@@ -12,7 +12,6 @@
 #include <string.h>
 #include <time.h>
 
-#define MAX_EVENTS 1000
 #define MAX_JETS 20
 
 #define PT_NBINS      60
@@ -57,7 +56,14 @@ double wakeup_delay();
 /*****************************************************************************/
 int main(int argc, char *argv[])
 {
-  event_t *events = (event_t *) calloc(MAX_EVENTS, sizeof(event_t));
+  FILE *fcount = fopen("../cluster_jets/jets.txt", "r");
+  if (!fcount) { printf("Couldn't open jets.txt\n"); return 1; }
+  int n_total = 0, ch;
+  while ((ch = fgetc(fcount)) != EOF) if (ch == '\n') n_total++;
+  fclose(fcount);
+  
+  event_t *events = (event_t *) calloc(n_total, sizeof(event_t));
+
   int n_events, e, j, i1, i2;
   data_t pt1, pt2, eta1, eta2, phi1, phi2, deta, dphi, dr, mjj;
   double wakeup, time_taken;
@@ -65,7 +71,7 @@ int main(int argc, char *argv[])
 
   printf("histogram test\n");
 
-  n_events = read_events("../cluster_jets/jets.txt", events, MAX_EVENTS);
+  n_events = read_events("../cluster_jets/jets.txt", events, n_total);
   
   printf("Read %d events from jets.txt\n", n_events);
 
