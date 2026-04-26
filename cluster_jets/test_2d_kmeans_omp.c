@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-   gcc -O1 -fopenmp test_2d_kmeans_serial.c -lm -o test_2d_kmeans_serial
+   gcc -O1 -fopenmp test_2d_kmeans_omp.c -lm -o test_2d_kmeans_omp
 
  */
 
