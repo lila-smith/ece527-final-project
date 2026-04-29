@@ -55,13 +55,13 @@ void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int 
 void kmeans_omp(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int *iterations, data_t *total_diff, int k);
 void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out);
 void kmeans_all_k_omp(arr_ptr v, arr_ptr weights, long int event_id, FILE *out);
-void kmeans_all_k_omp_particles(arr_ptr v, arr_ptr weights, long int event_id, FILE *out);
+void kmeans_all_k_omp_simd(arr_ptr v, arr_ptr weights, long int event_id, FILE *out);
 
 // Top level functions for each option
 void kmeans_serial(FILE *file, FILE *out, long int *event_id);
 void kmeans_omp_events(FILE *file, FILE *out, long int *event_id);
 void kmeans_omp_events_and_k(FILE *file, FILE *out, long int *event_id);
-void kmeans_omp_events_and_particles(FILE *file, FILE *out, long int *event_id);
+void kmeans_omp_events_and_simd_k(FILE *file, FILE *out, long int *event_id);
 
 /******************************************************************************/
 void detect_threads_setting()
@@ -133,7 +133,7 @@ int main(int argc, char *argv[])
     switch (option)
     {
     case 0:
-      kmeans_serial(file, out, &event_id);
+      //kmeans_serial(file, out, &event_id);
       break;
     case 1:
       kmeans_omp_events(file, out, &event_id);
@@ -142,14 +142,14 @@ int main(int argc, char *argv[])
       kmeans_omp_events_and_k(file, out, &event_id);
       break;
     case 3:
-      kmeans_omp_events_and_particles(file, out, &event_id);
+      kmeans_omp_events_and_simd_k(file, out, &event_id);
       break;
     }
     clock_gettime(CLOCK_REALTIME, &time_stop);
     time_taken[option] = interval(time_start, time_stop);
   }
 
-  printf("\n Events, Threads, kmeans_serial, kmeans_omp_events, kmeans_omp_events_and_k, kmeans_omp_events_and_particles");
+  printf("\n Events, Threads, kmeans_serial, kmeans_omp_events, kmeans_omp_events_and_k, kmeans_omp_events_and_simd_k");
   printf("\n%ld, %d, %f, %f, %f, %f\n", event_id, omp_get_max_threads(), time_taken[0], time_taken[1], time_taken[2], time_taken[3]);
 
 } /* end main */
@@ -521,164 +521,6 @@ void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int 
   free(py);
 }
 
-// Helper: Run k-means partitioned by particle groups for a single k value and output results for this event
-void kmeans_omp(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int *iterations, data_t *total_diff, int k)
-{
-  long int i, j, m, n, min_dist_centroid;
-  long int row_len = get_arr_rowlen(v);
-  long int dimensions = get_arr_collen(v);
-  data_t *data = get_arr_start(v);
-  data_t centroid_data[K_MAX * DIMENSIONS];
-  data_t centroids_tmp_data[K_MAX * DIMENSIONS];
-  data_t *counts = (data_t *)calloc(k, sizeof(data_t));
-  data_t *px = (data_t *)calloc(k, sizeof(data_t));
-  data_t *py = (data_t *)calloc(k, sizeof(data_t));
-  int *assignments = (int *)malloc(row_len * sizeof(int));
-  // Initialize assignments array (with dummy val) before using
-  for (j = 0; j < row_len; j++)
-    assignments[j] = -1;
-  int iters = 0, moved_points_tmp = 0;
-  data_t min_dist, dist, diff, weight_squared_diff;
-  /* Start moved_points above threshold so the loop runs at least once */
-  int moved_points = CONVERGENCE_THRESH * 10;
-
-  /* Randomize initial centroids using a thread-safe per-call seed.
-     XOR with k and the data pointer to get different starts for each k. */
-  unsigned int seed = (unsigned int)(RAND_SEED ^ (unsigned int)k ^ (unsigned int)(size_t)v);
-  for (i = 0; i < k * DIMENSIONS; i++)
-  {
-    centroid_data[i] = (data_t)(rand_r(&seed) / (double)RAND_MAX) * (MAXVAL - MINVAL) + MINVAL;
-  }
-
-  if (DEBUG)
-    printf("Running k-means with k = %d\n", k);
-  /* Iterate until fewer than convergence_thresh points change cluster,
-     or the maximum iteration count is reached */
-  while ((moved_points > CONVERGENCE_THRESH && iters < ITERS) || iters == 0)
-  {
-    /* Zero out centroid accumulators and per-cluster weight sums each iteration */
-    memset(centroids_tmp_data, 0, k * dimensions * sizeof(data_t));
-    memset(counts, 0, k * sizeof(data_t));
-    memset(px, 0, k * sizeof(data_t));
-    memset(py, 0, k * sizeof(data_t));
-    if (DEBUG)
-      printf("Iteration %d: , Moved points: %d", iters, moved_points);
-    moved_points_tmp = 0;
-    weight_squared_diff = 0.0;
-/* Assignment step: assign each point to the nearest centroid */
-#pragma omp parallel for reduction(+ : moved_points) private(moved_points_tmp, n, j)
-    for (n = 0; n < row_len; n += PARTICLES_PER_THREAD)
-    {
-      for (j = n; j < n + PARTICLES_PER_THREAD && j < row_len; j++)
-      {
-        min_dist = -1.0;
-        min_dist_centroid = 0;
-        /* Find the closest centroid using squared Euclidean distance */
-        for (m = 0; m < k; m++)
-        {
-          dist = 0.0;
-          for (i = 0; i < dimensions; i++)
-          {
-            diff = centroid_data[m * dimensions + i] - data[j * dimensions + i];
-            // Handle periodicity in phi (i.e. phi ~ phi +- 2pi)
-            if (i == 1)
-            {
-              if (diff > M_PI)
-                diff -= 2 * M_PI;
-              if (diff < -M_PI)
-                diff += 2 * M_PI;
-            }
-            dist += diff * diff;
-          }
-          if (min_dist < 0.0 || dist < min_dist)
-          {
-            min_dist = dist;
-            min_dist_centroid = m;
-          }
-        }
-        /* Count how many points switched clusters this iteration */
-        if (assignments[j] != min_dist_centroid)
-        {
-          moved_points_tmp++;
-          assignments[j] = min_dist_centroid;
-        }
-        /* Accumulate pT-weighted coordinates into the nearest centroid's sum,
-           and add this point's weighted distance to the total inertia */
-        for (i = 0; i < dimensions; i++)
-        {
-          data_t val = data[j * dimensions + i];
-          /* Handle periodicity in phi for the centroid mean */
-          if (i == 1)
-          {
-            data_t d = val - centroid_data[min_dist_centroid * dimensions + i];
-            if (d > M_PI)
-              val -= 2 * M_PI;
-            if (d < -M_PI)
-              val += 2 * M_PI;
-          }
-          centroids_tmp_data[min_dist_centroid * dimensions + i] += weights->data[j] * val;
-        }
-        weight_squared_diff += weights->data[j] * min_dist;
-        counts[min_dist_centroid] += weights->data[j];
-        px[min_dist_centroid] += weights->data[j] * cosf(data[j * dimensions + 1]);
-        py[min_dist_centroid] += weights->data[j] * sinf(data[j * dimensions + 1]);
-      }
-
-      /* Update step: move each centroid to the pT-weighted mean of its assigned points */
-      for (m = 0; m < k; m++)
-      {
-        if (counts[m] > 0)
-        {
-          /* Divide accumulated weighted coordinate sum by total weight to get weighted mean */
-          for (i = 0; i < dimensions; i++)
-          {
-            centroids_tmp_data[m * dimensions + i] /= counts[m];
-            if (DEBUG)
-              printf("%.4f ", centroids_tmp_data[m * dimensions + i]);
-          }
-          /* Wrap the averaged phi back into [-pi, pi] */
-          if (dimensions > 1)
-          {
-            if (centroids_tmp_data[m * dimensions + 1] > M_PI)
-              centroids_tmp_data[m * dimensions + 1] -= 2 * M_PI;
-            if (centroids_tmp_data[m * dimensions + 1] < -M_PI)
-              centroids_tmp_data[m * dimensions + 1] += 2 * M_PI;
-          }
-          if (DEBUG)
-            printf("\n");
-        }
-        else
-        {
-          /* Empty cluster: no points assigned, so keep the previous centroid position
-             to avoid collapsing it to (0, 0) */
-          for (i = 0; i < dimensions; i++)
-          {
-            centroids_tmp_data[m * dimensions + i] = centroid_data[m * dimensions + i];
-          }
-        }
-      }
-    }
-
-    if (DEBUG)
-      printf("\n");
-
-    memcpy(centroid_data, centroids_tmp_data, k * dimensions * sizeof(data_t));
-    moved_points += moved_points_tmp;
-    iters++;
-  }
-
-  *iterations = iters;
-  *total_diff = weight_squared_diff;
-  memcpy(centroids, centroid_data, k * DIMENSIONS * sizeof(data_t));
-  // memcpy(jet_pts, counts, k * sizeof(data_t));
-  for (m = 0; m < k; m++)
-    jet_pts[m] = sqrtf(px[m] * px[m] + py[m] * py[m]);
-  free(assignments);
-  free(counts);
-  free(px);
-  free(py);
-}
-
 // Helper: Run k-means for all k values and output results for this event, then stream the best jets to file
 void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
 {
@@ -853,7 +695,8 @@ void kmeans_all_k_omp(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
 }
 
 // Helper: Run k-means for all k values with partitioned particles and output results for this event, then stream the best jets to file
-void kmeans_all_k_omp_particles(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
+#pragma omp declare simd
+void kmeans_all_k_omp_simd(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
 {
   long int i, j, k, max_idx;
   int *iterations;
@@ -868,10 +711,11 @@ void kmeans_all_k_omp_particles(arr_ptr v, arr_ptr weights, long int event_id, F
   data_t *jet_pts = (data_t *)malloc(K_MAX * sizeof(data_t));
   iterations = (int *)malloc(sizeof(int));
   /* Run k-means for each value of k from 1 to K_MAX, storing results */
+  #pragma omp parallel for simd
   for (k = 1; k <= K_MAX; k++)
   {
     /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
-    kmeans_omp(v, weights, centroids, jet_pts, iterations, &total_diff, k);
+    kmeans(v, weights, centroids, jet_pts, iterations, &total_diff, k);
     /* Store results for this k (per-event scratch) */
     per_k_iterations[k - 1] = *iterations;
     per_k_diffs[k - 1] = total_diff;
@@ -1057,6 +901,7 @@ void kmeans_omp_events_and_k(FILE *file, FILE *out, long int *all_event_id)
       }
     }
   }
+#pragma omp taskwait
 
   fclose(file);
   fclose(out);
@@ -1064,7 +909,7 @@ void kmeans_omp_events_and_k(FILE *file, FILE *out, long int *all_event_id)
 }
 
 // Top level option: Run k-means for each event in parallel, and partition particles to update separately, then stream the best jets to file
-void kmeans_omp_events_and_particles(FILE *file, FILE *out, long int *all_event_id)
+void kmeans_omp_events_and_simd_k(FILE *file, FILE *out, long int *all_event_id)
 {
 
   int collecting_data = 1;
@@ -1081,7 +926,7 @@ void kmeans_omp_events_and_particles(FILE *file, FILE *out, long int *all_event_
       {
 #pragma omp task firstprivate(v0, pT, event_id) shared(out)
         {
-          kmeans_all_k_omp_particles(v0, pT, event_id, out);
+          kmeans_all_k_omp_simd(v0, pT, event_id, out);
           /* Free the per-event arrays allocated before the task was spawned */
           free(v0->data);
           free(v0);
@@ -1100,6 +945,7 @@ void kmeans_omp_events_and_particles(FILE *file, FILE *out, long int *all_event_
         break;
       }
     }
+#pragma omp taskwait
   }
 
   fclose(file);
