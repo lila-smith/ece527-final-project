@@ -9,7 +9,7 @@ from mpl_toolkits.mplot3d import Axes3D  # registers 3D projection
 PARTICLES_FILE = "../generate_events/events.txt"
 JETS_FILE = "../cluster_jets/jets.txt"
 # Set to None to plot all events, or a list of ints to plot specific events
-EVENTS_TO_PLOT = [3]
+EVENTS_TO_PLOT = [5, 6, 7]
 
 CYLINDER_RADIUS = 1.0   # arbitrary; only affects visual scale
 ETA_RANGE = (-4.5, 4.5) # z-axis limits on the cylinder
@@ -133,6 +133,8 @@ def plot_events(events=EVENTS_TO_PLOT, cylinder_plot=CYLINDER_PLOT):
         if cylinder_plot:
             ax.plot_surface(_ETA_C, _Y_CYL, _Z_CYL, alpha=0.25,
                             color="lightsteelblue", linewidth=0, antialiased=True)
+            ax.plot_surface(_ETA_C/200, _Y_CYL, _Z_CYL, alpha=0.5,
+                            color="lightsteelblue", linewidth=0, antialiased=True)
 
             # Map particles onto the cylinder surface
             sizes = (ev["pT"].clip(lower=0) / ev["pT"].clip(lower=1).max()) * 200 + 10
@@ -175,6 +177,10 @@ def plot_events(events=EVENTS_TO_PLOT, cylinder_plot=CYLINDER_PLOT):
             ax.set_xlim(*ETA_RANGE)
             ax.set_ylim(-CYLINDER_RADIUS * 1.1, CYLINDER_RADIUS * 1.1)
             ax.set_zlim(-CYLINDER_RADIUS * 1.1, CYLINDER_RADIUS * 1.1)
+            # Reduce axes ticks to avoid clutter
+            ax.set_xticks([-4, -2, 2, 4])
+            ax.set_yticks([-CYLINDER_RADIUS, 0, CYLINDER_RADIUS])
+            ax.set_zticks([-CYLINDER_RADIUS, 0, CYLINDER_RADIUS])
             # Aspect: η span vs. diameter
             eta_span = ETA_RANGE[1] - ETA_RANGE[0]
             ax.set_box_aspect([eta_span, 2 * CYLINDER_RADIUS, 2 * CYLINDER_RADIUS])
@@ -184,7 +190,7 @@ def plot_events(events=EVENTS_TO_PLOT, cylinder_plot=CYLINDER_PLOT):
                 pane.set_edgecolor((0, 0, 0, 0.08))
             for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
                 axis._axinfo["grid"]["color"] = (0.4, 0.4, 0.4, 0.12)
-            ax.view_init(elev=15, azim=-60)  # slight angle so η axis reads left-to-right
+            ax.view_init(elev=20, azim=-60)  # slight angle so η axis reads left-to-right
         else:
             ax.set_xlabel("η (eta)")
             ax.set_ylabel("φ (phi)")
@@ -198,7 +204,7 @@ def plot_events(events=EVENTS_TO_PLOT, cylinder_plot=CYLINDER_PLOT):
         ax.axis("off")
 
     plt.tight_layout()
-    plt.savefig("eta_phi_plot.png", dpi=120)
+    plt.savefig("eta_phi_plot.png", dpi=500)
     plt.show()
     print(f"Plotted {n} event(s). Saved to eta_phi_plot.png")
     print(df.head(10).to_string(index=False))
