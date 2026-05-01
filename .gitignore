@@ -8,5 +8,6 @@
 !*.cpp
 !*.py
 !*.sh
+!*.ipynb
 .venv/
 !requirements.txt
