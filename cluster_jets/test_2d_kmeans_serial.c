@@ -14,9 +14,9 @@
 #include <string.h>
 #include <time.h>
 
-#define ARRAY_LEN 100
+#define ARRAY_LEN 20
 #define DIMENSIONS 2
-#define CONVERGENCE_THRESH 0.0001
+#define CONVERGENCE_THRESH 1
 
 #define MINVAL -2.5
 #define MAXVAL 2.5
@@ -26,6 +26,7 @@
 #define PT_CUT 80.0
 
 #define RAND 0
+#define RAND_SEED 12345
 #define DEBUG 0
 
 
@@ -45,7 +46,6 @@ int set_arr_rowlen(arr_ptr v, long int index);
 long int get_arr_rowlen(arr_ptr v);
 long int get_arr_collen(arr_ptr v);
 int init_array(arr_ptr v, long int row_len, long int col_len);
-int init_array_rand(arr_ptr v, long int row_len, long int col_len);
 int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, FILE *file);
 void print_array(arr_ptr v);
 double interval(struct timespec start, struct timespec end);
@@ -169,25 +169,6 @@ int init_array(arr_ptr v, long int row_len, long int col_len)
     return 0;
 }
 
-/* initialize array with random numbers in a range */
-int init_array_rand(arr_ptr v, long int row_len, long int col_len)
-{
-  long int i;
-  double fRand(double fMin, double fMax);
-
-  if (row_len > 0 && col_len > 0)
-  {
-    v->rowlen = row_len;
-    v->collen = col_len;
-    for (i = 0; i < row_len * col_len; i++)
-    {
-      v->data[i] = (data_t)(fRand((double)(MINVAL), (double)(MAXVAL)));
-    }
-    return 1;
-  }
-  else
-    return 0;
-}
 
 int init_array_txt(arr_ptr etaphi, arr_ptr pT, long int row_len, long int col_len, FILE *file)
 {
@@ -328,15 +309,13 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
   printf("Running k-means with k = %d\n", k);
   /* Iterate until fewer than convergence_thresh points change cluster,
      or the maximum iteration count is reached */
-  while ((moved_points > convergence_thresh && iters < max_iterations) || iters == 0)
+  while ((moved_points >= convergence_thresh && iters < max_iterations) || iters == 0)
   {
     /* Zero out centroid accumulators and per-cluster weight sums each iteration */
     memset(centroids_tmp_data, 0, k * dimensions * sizeof(data_t));
     memset(counts, 0, k * sizeof(data_t));
     memset(px, 0, k * sizeof(data_t));
     memset(py, 0, k * sizeof(data_t));
-    if (DEBUG)
-    printf("Iteration %d: , Moved points: %d", iters, moved_points);
     int moved_points_tmp = 0;
     weight_squared_diff = 0.0;
     /* Assignment step: assign each point to the nearest centroid */
@@ -433,6 +412,8 @@ void kmeans(arr_ptr v, arr_ptr weights, arr_ptr centroids, arr_ptr centroids_tmp
     printf("\n");
 
     memcpy(centroid_data, centroids_tmp_data, k * dimensions * sizeof(data_t));
+    if (DEBUG)
+      printf("Iteration %d, Moved points: %d\n", iters, moved_points_tmp);
     moved_points = moved_points_tmp;
     iters++;
   }
@@ -470,14 +451,15 @@ void kmeans_serial(FILE *file, FILE *out, long int *all_event_id)
 
   while (init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file))
   {
-    event_id++;
     /* Run k-means for each value of k from 1 to K_MAX, storing results */
     for (k = 1; k <= K_MAX; k++)
     {
-      /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
-      init_array_rand(centroids, K_MAX, DIMENSIONS);
-      init_array_rand(centroids_tmp, K_MAX, DIMENSIONS);
-      kmeans(v0, pT, centroids, centroids_tmp, jet_pts, ITERS, (int)floor(CONVERGENCE_THRESH * ARRAY_LEN), iterations, &total_diff, k);
+      /* Reinitialize centroids with a seed that varies by k and event, matching the OMP version */
+      unsigned int seed = (unsigned int)(RAND_SEED ^ (unsigned int)k ^ (unsigned int)event_id);
+      for (long int _i = 0; _i < k * DIMENSIONS; _i++)
+        centroids->data[_i] = (data_t)(rand_r(&seed) / (double)RAND_MAX) * (MAXVAL - MINVAL) + MINVAL;
+      memcpy(centroids_tmp->data, centroids->data, k * DIMENSIONS * sizeof(data_t));
+      kmeans(v0, pT, centroids, centroids_tmp, jet_pts, ITERS, CONVERGENCE_THRESH, iterations, &total_diff, k);
       /* Store results for this k (per-event scratch) */
       per_k_iterations[k - 1] = *iterations;
       per_k_diffs[k - 1] = total_diff;
@@ -532,6 +514,7 @@ void kmeans_serial(FILE *file, FILE *out, long int *all_event_id)
               per_k_centroids[kbest][i * DIMENSIONS + 1]);
     }
     fprintf(out, "\n");
+    event_id++;
   }
 
   free(v0->data);

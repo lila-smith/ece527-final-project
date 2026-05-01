@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d import Axes3D  # registers 3D projection
 
-PARTICLES_FILE = "../generate_events/events.txt"
-JETS_FILE = "../cluster_jets/jets.txt"
+PARTICLES_FILE = "generate_events/events.txt"
+JETS_FILE = "cluster_jets/jets.txt"
 # Set to None to plot all events, or a list of ints to plot specific events
 EVENTS_TO_PLOT = [5, 6, 7]
 
@@ -63,7 +63,7 @@ def parse_jets(path, events_to_plot):
             m = re.match(r'^event\s+(\d+)\s+njets\s+\d+\s+jets:', line)
             if not m:
                 continue
-            event_id = int(m.group(1)) - 1  # Convert to 0-based index
+            event_id = int(m.group(1))
             if event_id not in wanted:
                 continue
             for jet_match in jet_pattern.finditer(line):

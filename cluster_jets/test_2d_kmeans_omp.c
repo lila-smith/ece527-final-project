@@ -11,9 +11,9 @@
 #include <time.h>
 #include <omp.h>
 
-#define ARRAY_LEN 100
+#define ARRAY_LEN 20
 #define DIMENSIONS 2
-#define CONVERGENCE_THRESH 0.0001
+#define CONVERGENCE_THRESH 1
 
 #define MINVAL -2.5
 #define MAXVAL 2.5
@@ -51,7 +51,7 @@ double interval(struct timespec start, struct timespec end);
 double wakeup_delay();
 
 // Helper functions for k-means
-void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int *iterations, data_t *total_diff, int k);
+void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int *iterations, data_t *total_diff, int k, long int event_id);
 void kmeans_omp(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int *iterations, data_t *total_diff, int k);
 void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out);
 void kmeans_all_k_omp(arr_ptr v, arr_ptr weights, long int event_id, FILE *out);
@@ -74,8 +74,8 @@ void detect_threads_setting()
   {
     ognt = omp_get_num_threads();
   }
-
-  printf("omp's default number of threads is %ld\n", ognt);
+  if (DEBUG) 
+    printf("omp's default number of threads is %ld\n", ognt);
 
   /* If this is illegal (0 or less), default to the "#define THREADS"
      value that is defined above */
@@ -96,7 +96,8 @@ void detect_threads_setting()
   {
     ognt = omp_get_num_threads();
   }
-  printf("Using %ld threads for OpenMP\n", ognt);
+  if (DEBUG)
+    printf("Using %ld threads for OpenMP\n", ognt);
 }
 
 /*****************************************************************************/
@@ -110,6 +111,8 @@ int main(int argc, char *argv[])
   detect_threads_setting();
 
   FILE *file, *out;
+  printf("================================\n");
+  printf("OpenMP k-means test with 3 options\n");
 
   for (int option = 0; option < OPTIONS; option++)
   {
@@ -133,7 +136,7 @@ int main(int argc, char *argv[])
     switch (option)
     {
     case 0:
-      //kmeans_serial(file, out, &event_id);
+      kmeans_serial(file, out, &event_id);
       break;
     case 1:
       kmeans_omp_events(file, out, &event_id);
@@ -142,16 +145,16 @@ int main(int argc, char *argv[])
       kmeans_omp_events_and_k(file, out, &event_id);
       break;
     case 3:
-      kmeans_omp_events_and_simd_k(file, out, &event_id);
+      kmeans_serial(file, out, &event_id);
       break;
     }
     clock_gettime(CLOCK_REALTIME, &time_stop);
     time_taken[option] = interval(time_start, time_stop);
   }
 
-  printf("\n Events, Threads, kmeans_serial, kmeans_omp_events, kmeans_omp_events_and_k, kmeans_omp_events_and_simd_k");
+  printf("Events, Threads, kmeans_serial, kmeans_omp_events, kmeans_omp_events_and_k, kmeans_omp_events_and_simd_k");
   printf("\n%ld, %d, %f, %f, %f, %f\n", event_id, omp_get_max_threads(), time_taken[0], time_taken[1], time_taken[2], time_taken[3]);
-
+  printf("================================\n");
 } /* end main */
 
 /*********************************/
@@ -369,7 +372,7 @@ double wakeup_delay()
 /************************************/
 
 // Helper: Run k-means for a single k value and output results for this event
-void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int *iterations, data_t *total_diff, int k)
+void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int *iterations, data_t *total_diff, int k, long int event_id)
 {
   long int i, j, m, min_dist_centroid;
   long int row_len = get_arr_rowlen(v);
@@ -390,8 +393,8 @@ void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int 
   int moved_points = CONVERGENCE_THRESH * 10;
 
   /* Randomize initial centroids using a thread-safe per-call seed.
-     XOR with k and the data pointer to get different starts for each k. */
-  unsigned int seed = (unsigned int)(RAND_SEED ^ (unsigned int)k ^ (unsigned int)(size_t)v);
+     XOR with k and event_id to get different, reproducible starts for each k and event. */
+  unsigned int seed = (unsigned int)(RAND_SEED ^ (unsigned int)k ^ (unsigned int)event_id);
   for (i = 0; i < k * DIMENSIONS; i++)
   {
     centroid_data[i] = (data_t)(rand_r(&seed) / (double)RAND_MAX) * (MAXVAL - MINVAL) + MINVAL;
@@ -401,7 +404,7 @@ void kmeans(arr_ptr v, arr_ptr weights, data_t *centroids, data_t *jet_pts, int 
     printf("Running k-means with k = %d\n", k);
   /* Iterate until fewer than convergence_thresh points change cluster,
      or the maximum iteration count is reached */
-  while ((moved_points > CONVERGENCE_THRESH && iters < ITERS) || iters == 0)
+  while ((moved_points >= CONVERGENCE_THRESH && iters < ITERS) || iters == 0)
   {
     /* Zero out centroid accumulators and per-cluster weight sums each iteration */
     memset(centroids_tmp_data, 0, k * dimensions * sizeof(data_t));
@@ -540,7 +543,7 @@ void kmeans_all_k(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
   for (k = 1; k <= K_MAX; k++)
   {
     /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
-    kmeans(v, weights, centroids, jet_pts, iterations, &total_diff, k);
+    kmeans(v, weights, centroids, jet_pts, iterations, &total_diff, k, event_id);
     /* Store results for this k (per-event scratch) */
     per_k_iterations[k - 1] = *iterations;
     per_k_diffs[k - 1] = total_diff;
@@ -628,7 +631,7 @@ void kmeans_all_k_omp(arr_ptr v, arr_ptr weights, long int event_id, FILE *out)
     data_t centroids[K_MAX * DIMENSIONS];
     data_t jet_pts[K_MAX];
     int iters;
-    kmeans(v, weights, centroids, jet_pts, &iters, &total_diff, k);
+    kmeans(v, weights, centroids, jet_pts, &iters, &total_diff, k, event_id);
     /* Each task writes to a different index, so no race on these arrays */
     per_k_iterations[k - 1] = iters;
     per_k_diffs[k - 1] = total_diff;
@@ -715,7 +718,7 @@ void kmeans_all_k_omp_simd(arr_ptr v, arr_ptr weights, long int event_id, FILE *
   for (k = 1; k <= K_MAX; k++)
   {
     /* Reinitialize centroids randomly for each k to avoid reusing previous positions */
-    kmeans(v, weights, centroids, jet_pts, iterations, &total_diff, k);
+    kmeans(v, weights, centroids, jet_pts, iterations, &total_diff, k, event_id);
     /* Store results for this k (per-event scratch) */
     per_k_iterations[k - 1] = *iterations;
     per_k_diffs[k - 1] = total_diff;
