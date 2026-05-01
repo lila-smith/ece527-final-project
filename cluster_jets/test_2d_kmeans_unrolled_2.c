@@ -104,7 +104,6 @@ int main(int argc, char *argv[])
   // START EVENT LOOP
   while (init_array_txt(v0, pT, ARRAY_LEN, DIMENSIONS, file))
   {
-    event_id++;
     /* Run k-means for each value of k from 1 to K_MAX, storing results */
     for (k = 1; k <= K_MAX; k++)
     {
@@ -166,6 +165,7 @@ int main(int argc, char *argv[])
               per_k_centroids[kbest][i * DIMENSIONS + 1]);
     }
     fprintf(out, "\n");
+    event_id++;
   }
 
   fclose(file);
