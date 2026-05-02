@@ -1,7 +1,9 @@
-### To generate data:
-- _Note: Basic compilation instructions are at top of each file_
-- Compile and run gen.cpp with your preferred number of events, and number of particles per event
-- Compile and run calc.cpp (using `events.txt` generated in previous step)
-- Proceed with next steps using `events_with_4vec.txt` as input for further processing
-	- Columns here are: pT eta phi mass id px py pz E
-- _Also note: If we decide to time / parallelize this stage, we should convert to C_
+### To Build
+Use `make all` to build needed files.
+
+### To Run
+For a quick run, use `./run.sh 1000` to specify 1000 events for all compared optimizations. You may need to install `requirements.txt` in your virtual environment with `pip install -r requirements.txt`.
+
+Check the output `eta_phi_plot.png` to see the clustering in action. 
+
+For a complete run, use `./run_all.sh` to try the event number that we tested. 

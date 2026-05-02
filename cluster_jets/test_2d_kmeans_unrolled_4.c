@@ -70,7 +70,8 @@ int main(int argc, char *argv[])
   data_t per_k_jet_pts[K_MAX][K_MAX];
   long int event_id = 0;
 
-  printf("k-means test\n");
+  printf("================================\n");
+  printf("Unroll 4 k-means test\n");
 
   /* declare and initialize the array */
   arr_ptr v0 = new_array(ARRAY_LEN, DIMENSIONS);
@@ -175,6 +176,7 @@ int main(int argc, char *argv[])
 
   printf("\n Events, Time (sec)");
   printf("\n%ld, %f\n", event_id, time_taken);
+  printf("================================\n");
 
 } /* end main */
 
